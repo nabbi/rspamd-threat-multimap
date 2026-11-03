@@ -42,7 +42,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
@@ -160,7 +160,7 @@ storage.googleapis.com firebasestorage.googleapis.com firebasestorage.google.com
 appspot.com web.app firebaseapp.com firebaseio.com a.run.app run.app blogspot.com youtube.com
 www.youtube.com youtu.be gmail.com
 microsoft.com www.microsoft.com learn.microsoft.com msrc.microsoft.com blogs.microsoft.com
-azure.microsoft.com login.microsoftonline.com onedrive.live.com 1drv.ms api.onedrive.com live.com bing.app
+azure.microsoft.com login.microsoftonline.com onedrive.live.com 1drv.ms api.onedrive.com live.com
 sway.cloud.microsoft sway.office.com updates.microsoft.com update.microsoft.com windowsupdate.com
 download.microsoft.com get.adobe.com
 office.com outlook.com sharepoint.com onmicrosoft.com windows.net blob.core.windows.net
