@@ -16,22 +16,15 @@ min_ratio = 0.5             # refuse a map under half the current one (a feed ou
 # Names never listed, nor anything under them (yours, partners')
 allowlist = "allowlist.txt"
 
-# Names never listed exactly (their subdomains still can be). Large shared
-# platforms: a feed listing one of these by mistake would hit most mail.
-# The second group are hosts attackers share with everyone else (Talos IOC
-# lists give the URL of a payload on them; the host says nothing).
+# Names never listed exactly (their subdomains still can be), in addition
+# to the shared hosts built into the updater (SHARED_HOSTS in the script:
+# file, paste and link-shortening services, code and package registries,
+# cloud storage and web platforms, mail and marketing senders, IP-check
+# sites). An IOC list names those as the URL of a payload or a C2 channel
+# on them; the host itself says nothing, and most mail links to one.
+# Add the platforms your mail depends on that are not in it.
 protect = [
-  "amazon.com", "amazonaws.com", "amazonses.com", "apple.com", "icloud.com",
-  "cloudflare.com", "docusign.net", "dropbox.com", "github.com",
-  "githubusercontent.com", "gmail.com", "google.com", "googleapis.com",
-  "googleusercontent.com", "live.com", "microsoft.com", "office.com",
-  "onmicrosoft.com", "outlook.com", "sharepoint.com", "yahoo.com",
-  "constantcontact.com", "hubspotemail.net", "list-manage.com",
-  "mailchimp.com", "sendgrid.net", "exacttarget.com", "salesforce.com",
-  "api.telegram.org", "bit.ly", "bitbucket.org", "discord.com",
-  "docs.google.com", "drive.google.com", "pastebin.com",
-  "raw.githubusercontent.com", "storage.googleapis.com", "transfer.sh",
-  "www.dropbox.com", "www.mediafire.com", "www.npmjs.com",
+  "zoom.us", "zoomgov.com", "box.com", "app.box.com", "webex.com",
 ]
 
 # Category -> <category>.map and the symbol of the rule that reads it
@@ -45,7 +38,9 @@ fraud    = { symbol = "THREAT_FRAUD",    rank = 1 }
 # Feeds. format: domain (a name per line), hosts ("0.0.0.0 name"),
 # infoblox (combined.csv; `classes` maps its classification to a category,
 # classifications not listed are skipped), talos (a GitHub archive of
-# Cisco-Talos/IOCs: the host names in every .txt file).
+# Cisco-Talos/IOCs: the host names in every .txt file), unit42 (a GitHub
+# archive of PaloAltoNetworks/Unit42-timely-threat-intel: the defanged host
+# names in every report).
 
 # Phishing: OpenPhish, PhishTank and IPThreat, refreshed every 12 hours
 [[feed]]
@@ -90,6 +85,16 @@ category = "malware"
 name = "talos"
 url = "https://github.com/Cisco-Talos/IOCs/archive/refs/heads/main.tar.gz"
 format = "talos"
+category = "malware"
+
+# Palo Alto Networks Unit 42: the reports behind its timely threat intel
+# posts (malware delivery, C2, phishing and scam infrastructure), the whole
+# repo as one archive. Only defanged names (evil[.]com) count: the
+# references, file names and quoted mail headers in the prose are not.
+[[feed]]
+name = "unit42"
+url = "https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/archive/refs/heads/main.tar.gz"
+format = "unit42"
 category = "malware"
 
 # Lower risk, off by default: fake shops and scams, more false positives

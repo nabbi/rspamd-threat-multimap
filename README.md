@@ -42,24 +42,39 @@ mail, they list the marketing and bulk senders people subscribe to
 | `infoblox` | malware, phishing | 26,734 | [Infoblox threat intelligence](https://github.com/infobloxopen/threat-intelligence): malicious, clickfix, voltastealer, phishing (not "suspicious") |
 | `blp-ransomware` | malware | 1,904 | [The Block List Project](https://github.com/blocklistproject/Lists) ransomware |
 | `talos` | malware | 2,649 | [Cisco Talos IOCs](https://github.com/Cisco-Talos/IOCs): the hosts in the IOC lists of its blog posts, 2022 on |
+| `unit42` | malware | 7,340 | [Unit 42 timely threat intel](https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel): the defanged hosts in Palo Alto Networks' reports, 2020 on |
 | `hagezi-fake` (off) | fraud | ~17,500 | [HaGeZi](https://github.com/hagezi/dns-blocklists) fake shops and scams |
 | `blp-scam` (off) | fraud | ~8,500 | The Block List Project scam |
 
-\* 2026-11-03. Merged: 179,218 names. Feeds publish under their own
+\* 2026-11-03. Merged: 186,455 names. Feeds publish under their own
 terms; check them for your use. This project downloads them; it does not
 redistribute them.
 
-The Talos feed is the repository's GitHub archive (one 2.4 MB tar.gz,
-fetched again only when a report is added). Each blog post's `.txt` file
-mixes hashes, IP addresses, URLs, domains and email addresses, usually
-defanged (`evil[.]com`, `hxxp[://]`). The parser undoes that and keeps the
-host names, bare or from URLs, and drops the rest: hashes, IPs and email
-addresses, and file names (`auto.exe`) because their suffix is not a
-top-level domain. A host named by several posts is listed once. Talos
-also gives URLs of payloads on shared platforms (`bit.ly`, `discord.com`,
-`drive.google.com`…); `protect` in the example config keeps those hosts
-out. The STIX `.json` files beside the lists name fewer hosts and are not
-read.
+The Talos and Unit 42 feeds are each repository's GitHub archive (one
+tar.gz of 2.4 MB and 0.8 MB, fetched again only when a report is added).
+A report mixes hashes, IP addresses, URLs, domains and email addresses,
+usually defanged (`evil[.]com`, `hxxps[:]//`), with prose and headings.
+The parser undoes the defanging and keeps the host names, bare or from
+URLs (`name[.](xyz|com)` is both names), and drops the rest: hashes, IPs
+and email addresses, and file names (`auto.exe`) because their suffix is
+not a top-level domain. A host named by several reports is listed once.
+A line, or a whole section, that the report marks as legitimate or not
+malicious (the sites an infected host calls to check its connectivity,
+the brand a page spoofs) is skipped.
+
+Talos (`.txt` lists only; the STIX `.json` files beside them name fewer
+hosts) often lists plain URLs, so every line counts. Unit 42 reports
+(`.txt`, a few `.md`, one without an extension) defang every indicator
+and leave the rest plain: the LinkedIn and X posts under REFERENCES, the
+vendor blogs in NOTES, file names (`invoice.zip`: `.zip` is a top-level
+domain) and the mail servers in quoted `Received:` headers. So in the
+`unit42` format only a defanged line names a threat, which drops those
+and keeps 7,340 of the 7,871 names a plain read would take.
+
+Both name payloads, phishing pages and C2 channels on services everyone
+shares (`drive.google.com`, `github.com`, `discord.com`, `t.me`, `bit.ly`,
+`mega.nz`, a tenant's `workers.dev`): the path is the indicator, the host
+is not. The updater never lists those hosts: see `protect` below.
 
 rspamd's own `phishing` module already checks full URLs against OpenPhish
 and PhishTank; this adds their domains with wildcard matching, the other
@@ -102,9 +117,20 @@ nothing is lost. 0.1.0 wrote one `domain SYMBOL` map and lost 3 of its
 
 Put your own domains, and the ones you exchange mail with, in
 `allowlist.txt`: a listed name and everything under it are never in the
-map. `protect` in `config.toml` lists large shared platforms
-(google.com, sharepoint.com, sendgrid.net…) that are never listed
-themselves; their subdomains still can be (`phish.sharepoint.com`).
+map.
+
+Shared hosts are never listed exactly; their subdomains still can be
+(`phish.sharepoint.com`, a tenant's `name.workers.dev`). The updater has
+a built-in list (`SHARED_HOSTS`, about 220 names): file, paste and
+link-shortening services (`drive.google.com`, `pastebin.com`, `bit.ly`),
+code and package registries (`github.com`, `rubygems.org`), cloud storage
+and web platforms (`s3.amazonaws.com`, `workers.dev`, `vercel.app`),
+messaging (`discord.com`, `t.me`), the mail and marketing senders a feed
+lists by mistake now and then (`gmail.com`, `sendgrid.net`), and the
+IP-check sites malware calls (`ipinfo.io`). IOC lists name them as the
+URL of a payload or a C2 channel; the host says nothing about a message,
+and most mail links to one. `protect` in `config.toml` adds your own
+(the example names `zoom.us`, `box.com`, `webex.com`).
 
 ## Scores
 

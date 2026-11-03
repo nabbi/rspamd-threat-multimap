@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """rspamd-threat-multimap: build an rspamd multimap of high-risk threat domains.
 
-Downloads public threat feeds (phishing and malware domains, Cisco Talos
-IOC lists), validates and merges them into one map per category
+Downloads public threat feeds (phishing and malware domains, the IOC lists
+of Cisco Talos and Palo Alto Unit 42), validates and merges them into one
+map per category
 (``<category>.map``, a domain per line), each read by one rspamd multimap
 rule (rspamd/local.d/multimap.conf).
 The selector in rspamd/lua.local.d/selectors/threat_domains.lua feeds those
@@ -41,12 +42,12 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
-FORMATS = ("domain", "hosts", "infoblox", "talos")
-MAX_MEMBER = 8 * 1024 * 1024  # one file inside a talos archive
+FORMATS = ("domain", "hosts", "infoblox", "talos", "unit42")
+MAX_MEMBER = 8 * 1024 * 1024  # one file inside an IOC archive
 
 # Top-level domains: IANA's list, version 2026110300
 # (https://data.iana.org/TLD/tlds-alpha-by-domain.txt, refresh now and then),
@@ -138,6 +139,53 @@ yachts yahoo yamaxun yandex ye yodobashi yoga yokohama you youtube yt yun za zap
 """
 TLDS = (frozenset(_IANA_TLDS.split()) | {"onion"}) - {"arpa"}
 
+# Hosts everyone shares, never listed exactly (their subdomains still can
+# be: a tenant's name.workers.dev, bucket.s3.amazonaws.com). An IOC list
+# names them as the URL of a payload, a phishing page or a C2 channel on a
+# public service (drive.google.com, discord.com, t.me, bit.ly, workers.dev):
+# the path is the indicator, the host is not, and most mail links to one.
+# Then the mail and marketing platforms, which a feed lists by mistake
+# now and then and whose listing would score most mail, and the sites a
+# report names as what the attacker spoofs or as what an infected host
+# calls to check its connectivity. `protect` in the config adds to this.
+SHARED_HOSTS = frozenset("""
+github.com www.github.com api.github.com gist.github.com objects.githubusercontent.com
+raw.githubusercontent.com user-images.githubusercontent.com github.io gitlab.com gitlab.io
+bitbucket.org www.npmjs.com registry.npmjs.org pypi.org files.pythonhosted.org rubygems.org
+crates.io huggingface.co nodejs.org jsdelivr.net cdn.jsdelivr.net unpkg.com jspm.dev
+google.com www.google.com drive.google.com docs.google.com sites.google.com script.google.com
+forms.gle chromewebstore.google.com chrome.google.com feedproxy.google.com googleapis.com
+storage.googleapis.com firebasestorage.googleapis.com firebasestorage.google.com googleusercontent.com
+appspot.com web.app firebaseapp.com firebaseio.com a.run.app run.app blogspot.com youtube.com
+www.youtube.com youtu.be gmail.com
+microsoft.com www.microsoft.com learn.microsoft.com msrc.microsoft.com blogs.microsoft.com
+azure.microsoft.com login.microsoftonline.com onedrive.live.com 1drv.ms api.onedrive.com live.com
+office.com outlook.com sharepoint.com onmicrosoft.com windows.net blob.core.windows.net
+web.core.windows.net azurefd.net azurewebsites.net azure.com cloudapp.azure.com
+amazon.com amazonaws.com s3.amazonaws.com checkip.amazonaws.com cloudfront.net amazonses.com
+apple.com icloud.com cloudflare.com workers.dev pages.dev r2.dev trycloudflare.com
+dropbox.com www.dropbox.com dl.dropbox.com dl.dropboxusercontent.com
+discord.com discordapp.com cdn.discordapp.com media.discordapp.net discord.gg
+t.me api.telegram.org web.telegram.org telegra.ph graph.org
+pastebin.com paste.ee rentry.co hastebin.com
+bit.ly is.gd t.ly t.co tinyurl.com cutt.ly rebrand.ly psee.io href.li short.gy rb.gy shorturl.at
+goo.gl ow.ly tiny.cc lnkd.in
+transfer.sh temp.sh filebin.net catbox.moe files.catbox.moe anonfiles.com gofile.io pixeldrain.com
+ufile.io wetransfer.com we.tl sendspace.com mediafire.com www.mediafire.com ucarecdn.com mega.nz mega.io
+ipfs.io cf-ipfs.com cloudflare-ipfs.com dweb.link nftstorage.link w3s.link
+vercel.app netlify.app surge.sh glitch.me replit.app repl.co herokuapp.com weebly.com weeblysite.com
+wixsite.com godaddysites.com wordpress.com hostingersite.com 000webhostapp.com retool.com notion.com
+notion.site lovable.app created.app b-cdn.net ngrok.io ngrok.app ngrok-free.app
+duckdns.org dyna-ns.net no-ip.org ddns.net sytes.net serveftp.com hopto.org zapto.org myftp.org
+docusign.net docusign.com constantcontact.com hubspotemail.net list-manage.com mailchimp.com
+sendgrid.net exacttarget.com salesforce.com yahoo.com facebook.com www.facebook.com twitter.com
+x.com linkedin.com www.linkedin.com instagram.com medium.com reddit.com steamcommunity.com
+chatgpt.com openai.com api.openai.com openrouter.ai getsession.org example.com example.net example.org
+ip-api.com ipinfo.io ifconfig.me api.ipify.org ipify.org ipecho.net ident.me geoplugin.net
+reallyfreegeoip.org icanhazip.com ipv4.icanhazip.com myexternalip.com curlmyip.net ip.sb
+api.myip.com ipwho.is checkip.dyndns.org timeapi.io worldtimeapi.org
+""".split())
+
 _LABEL = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
 # hosts-file line: an address, then the name (bind-adblock's REGEX_DOMAIN)
 _HOSTS = re.compile(r"^\s*(?:(?:\d{1,3}\.){3}\d{1,3}|::1?|::)\s+(?P<domain>\S+)")
@@ -197,7 +245,7 @@ class ParseStats:
     invalid: int = 0
     skipped: int = 0  # comments, empty lines, rows of another type or class
     duplicates: int = 0  # a name listed again
-    files: int = 0  # talos: files read from the archive
+    files: int = 0  # talos, unit42: files read from the archive
 
     def add(self, out: dict[str, str], name: str, category: str) -> None:
         if name in out:
@@ -280,7 +328,7 @@ def parse_infoblox(text: str, classes: dict[str, str], stats: ParseStats) -> dic
     return out
 
 
-# Cisco Talos IOC lists defang names: evil[.]com, evil(.)com, hxxp[://]
+# IOC lists defang names: evil[.]com, evil(.)com, hxxp[://], hxxps[:]//
 _DEFANG = [
     (re.compile(r"\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)", re.I), "."),
     (re.compile(r"\[://\]|\(://\)"), "://"),
@@ -289,9 +337,17 @@ _DEFANG = [
     (re.compile(r"\[at\]|\(at\)", re.I), "@"),
     (re.compile(r"\bhxxp", re.I), "http"),
 ]
+_DEFANGED = re.compile("|".join(p.pattern for p, _ in _DEFANG), re.I)
 # scheme://[user@]host[:port]... ; the host is up to the port or the path
 _URL_HOST = re.compile(r"^[a-z][a-z0-9+.-]*://(?:[^/?#@\s]*@)?(?P<host>[^/?#:\s]+)", re.I)
 _TLD_LIKE = re.compile(r"^(?:[a-z]{2,}|xn--[a-z0-9-]+)$", re.I)
+# name.(xyz|com): one name under several suffixes
+_ALTERNATION = re.compile(r"^(?P<stem>[^\s()|]+\.)\((?P<alts>[a-z0-9.-]+(?:\|[a-z0-9.-]+)+)\)$", re.I)
+# A report's section heading ("REFERENCES:", "QAKBOT TRAFFIC TO LEGITIMATE
+# DOMAINS:") and the words that mark a line, or a whole section, as naming
+# sites that are not the threat
+_HEADING = re.compile(r"^[A-Z][A-Z0-9 ()/,:.'-]*:\s*$")
+_BENIGN = re.compile(r"legitimate|not (?:inherently )?malicious", re.I)
 
 
 def refang(text: str) -> str:
@@ -300,13 +356,21 @@ def refang(text: str) -> str:
     return text
 
 
-def talos_candidates(line: str) -> list[str]:
-    """The hostname-looking tokens of a Talos IOC line, defanging undone:
-    bare names and the hosts of URLs (user info, port and path removed).
-    Email addresses, IP addresses and hashes are not candidates; a name
-    whose last label is not a TLD (a file name) is, and fails normalize()."""
+def ioc_candidates(line: str) -> list[str]:
+    """The hostname-looking tokens of an IOC line, defanging undone: bare
+    names and the hosts of URLs (user info, port and path removed);
+    name.(xyz|com) is both names. Email addresses, IP addresses and hashes
+    are not candidates; a name whose last label is not a TLD (a file name)
+    is, and fails normalize()."""
     out = []
-    for tok in re.split(r"[\s,;|]+", refang(line)):
+    tokens = []
+    for tok in re.split(r"[\s,;]+", refang(line)):
+        m = _ALTERNATION.match(tok.strip("\"'<>[]{}"))
+        if m:
+            tokens += [m.group("stem") + alt for alt in m.group("alts").split("|")]
+        else:
+            tokens += tok.split("|")
+    for tok in tokens:
         tok = tok.strip("\"'<>()[]{}")
         m = _URL_HOST.match(tok)
         if m:
@@ -321,26 +385,53 @@ def talos_candidates(line: str) -> list[str]:
     return out
 
 
-def parse_talos(data: bytes, category: str, stats: ParseStats) -> dict[str, str]:
-    """A GitHub archive (tar.gz) of Cisco-Talos/IOCs: every *.txt file in
-    it, one per blog post, a mixed list of hashes, IP addresses, URLs,
-    domains and email addresses, often defanged. Keeps the host names,
-    bare or from URLs, once each; the rest is skipped. The STIX .json
-    files beside them list fewer names and are not read."""
+# The IOC archives: which files of the GitHub archive are read (by
+# extension; "" is a file without one) and whether a name counts only on a
+# defanged line.
+#   talos   Cisco-Talos/IOCs: a .txt list per blog post, beside STIX .json
+#           files that name fewer hosts and .py/.yar tooling. Plain URL
+#           lists are common, so every line counts.
+#   unit42  PaloAltoNetworks/Unit42-timely-threat-intel: a report per
+#           file (.txt, a few .md, one without an extension) of prose and
+#           indicators. The indicators are defanged; the references
+#           (linkedin.com, x.com, blog posts), file names (invoice.zip)
+#           and mail servers in quoted headers are not, so only a
+#           defanged line names a threat.
+IOC_FORMATS = {
+    "talos": {"suffixes": (".txt",), "defanged_only": False},
+    "unit42": {"suffixes": (".txt", ".md", ""), "defanged_only": True},
+}
+
+
+def parse_iocs(data: bytes, category: str, stats: ParseStats, suffixes: tuple[str, ...] = (".txt",),
+               defanged_only: bool = False) -> dict[str, str]:
+    """A GitHub archive (tar.gz) of IOC lists, one file per report: mixed
+    hashes, IP addresses, URLs, domains and email addresses, usually
+    defanged, between prose and headings. Keeps the host names, bare or
+    from URLs, once each; the rest is skipped. A line, or a whole section
+    under a heading, saying its sites are legitimate or not malicious is
+    skipped too, as is every undefanged line when `defanged_only`."""
     out: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
             for member in tar:
-                if not member.isfile() or not member.name.lower().endswith(".txt"):
+                if not member.isfile() or os.path.splitext(member.name)[1].lower() not in suffixes:
                     continue
                 if member.size > MAX_MEMBER:
                     raise ValueError(f"{member.name}: {member.size} bytes, larger than {MAX_MEMBER >> 20} MiB")
                 stats.files += 1
                 with tar.extractfile(member) as f:
                     text = f.read().decode("utf-8", errors="replace")
+                benign_section = False
                 for raw in text.splitlines():
                     stats.lines += 1
-                    candidates = talos_candidates(raw)
+                    line = raw.strip()
+                    if _HEADING.match(line):
+                        benign_section = bool(_BENIGN.search(line))
+                    if benign_section or _BENIGN.search(line) or (defanged_only and not _DEFANGED.search(line)):
+                        stats.skipped += 1
+                        continue
+                    candidates = ioc_candidates(line)
                     if not candidates:
                         stats.skipped += 1
                     for cand in candidates:
@@ -356,8 +447,8 @@ def parse_talos(data: bytes, category: str, stats: ParseStats) -> dict[str, str]
 
 def parse(feed: Feed, data: bytes) -> tuple[dict[str, str], ParseStats]:
     stats = ParseStats()
-    if feed.format == "talos":
-        return parse_talos(data, feed.category, stats), stats
+    if feed.format in IOC_FORMATS:
+        return parse_iocs(data, feed.category, stats, **IOC_FORMATS[feed.format]), stats
     text = data.decode("utf-8", errors="replace")
     if feed.format == "domain":
         return parse_domain(text, feed.category, stats), stats
@@ -390,7 +481,7 @@ class Config:
     max_cache_age: float = 72 * 3600
     min_ratio: float = 0.5
     allowlist: set[str] = field(default_factory=set)
-    protect: set[str] = field(default_factory=set)
+    protect: set[str] = field(default_factory=lambda: set(SHARED_HOSTS))  # plus the config's
 
 
 def _read_names(path: Path) -> set[str]:
@@ -452,7 +543,7 @@ def load_config(path: str | Path) -> Config:
     allowlist = set()
     if raw.get("allowlist"):
         allowlist = _read_names(base / raw["allowlist"])
-    protect = set()
+    protect = set(SHARED_HOSTS)
     for p in raw.get("protect", []):
         name = normalize(p)
         if name is None:

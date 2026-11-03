@@ -49,6 +49,12 @@ format = "talos"
 category = "malware"
 
 [[feed]]
+name = "unit42"
+url = "https://feeds.invalid/unit42.tar.gz"
+format = "unit42"
+category = "malware"
+
+[[feed]]
 name = "off"
 url = "https://feeds.invalid/off.txt"
 category = "malware"
@@ -74,6 +80,48 @@ TALOS_FILES = {
 }
 
 
+UNIT42_FILES = {
+    "Unit42-timely-threat-intel-main/2026-03-02-IOCs-for-a-loader.txt": (
+        "2026-03-02 (MONDAY): LOADER ACTIVITY\n"
+        "\n"
+        "REFERENCES:\n"
+        "\n"
+        "- https://www.linkedin.com/posts/unit42_loader-activity-123/\n"
+        "- https://x.com/Unit42_Intel/status/123\n"
+        "\n"
+        "NOTES:\n"
+        "\n"
+        "- Similar activity was documented at https://blog.example-vendor.com/loader/\n"
+        "- The loader is retrieved from hxxps[:]//github[.]com/user-attachments/files/1/Client.zip\n"
+        "- File name: Invoice_2026.zip\n"
+        "\n"
+        "INFECTION TRAFFIC:\n"
+        "\n"
+        "- 192.0.2[.]10 port 443 - c2.unit42-evil[.]com - HTTPS traffic\n"
+        "- hxxps[:]//cdn.unit42-evil[.]com/x/payload.bin\n"
+        "- port 443 - ident[.]me - connectivity check (not inherently malicious)\n"
+        "- spare[.](xyz|com) - gateway for the same actor\n"
+        "- Received: from mail.legit-sender.example (mail.legit-sender.example [198.51.100.5])\n"
+        "\n"
+        "TRAFFIC TO LEGITIMATE DOMAINS:\n"
+        "\n"
+        "- port 443 - www.oracle[.]com - HTTPS traffic\n"
+        "- port 443 - www.cisco[.]com - HTTPS traffic\n"
+        "\n"
+        "C2 DOMAINS:\n"
+        "\n"
+        "- c2.unit42-evil[.]com\n"
+        "- backup.unit42-evil[.]net\n"
+    ),
+    "Unit42-timely-threat-intel-main/2026-03-03-report.md":
+        "### REPORT\n\n- md-only.unit42-evil[.]org\n- plain.unit42-evil.org\n",
+    "Unit42-timely-threat-intel-main/2026-03-04-IOCs-without-extension": "- noext.unit42-evil[.]org\n",
+    "Unit42-timely-threat-intel-main/README.md": "Indicators at https://unit42.paloaltonetworks.com/\n",
+    "Unit42-timely-threat-intel-main/LICENSE": "MIT, see license.example.com\n",
+    "Unit42-timely-threat-intel-main/tools/stix.json": '{"pattern": "[domain-name:value = \'json-only[.]com\']"}',
+}
+
+
 def talos_tarball(files=TALOS_FILES):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -96,6 +144,7 @@ FEEDS = {
     "domain,1.0.0.127.in-addr.arpa,malicious,2026-01-01\n"
     "ip,192.0.2.1,malicious,2026-01-01\n",
     "https://feeds.invalid/iocs.tar.gz": talos_tarball(),
+    "https://feeds.invalid/unit42.tar.gz": talos_tarball(UNIT42_FILES),
 }
 
 
@@ -210,16 +259,24 @@ class TestParsers(unittest.TestCase):
         self.assertEqual(m.refang("hxxps[://]www[.]a(.)b[dot]com[:]80[/]x"), "https://www.a.b.com:80/x")
         self.assertEqual(m.refang("HXXP://a{.}b (dot) c, x[at]y"), "http://a.b . c, x@y")
 
-    def test_talos_candidates(self):
+    def test_ioc_candidates(self):
         line = "hxxps[://]www[.]evil(.)com[:]8443/x/y.php, foo[at]bar.com 1.2.3.4|443 " \
                "d41d8cd98f00b204e9800998ecf8427e evil2.com/path 'q.top' <rand>.c.ru auto.exe [::1]"
-        self.assertEqual(m.talos_candidates(line), ["www.evil.com", "evil2.com", "q.top", "rand>.c.ru", "auto.exe"])
-        self.assertEqual(m.talos_candidates("IOCs:"), [])
-        self.assertEqual(m.talos_candidates(""), [])
+        self.assertEqual(m.ioc_candidates(line), ["www.evil.com", "evil2.com", "q.top", "rand>.c.ru", "auto.exe"])
+        self.assertEqual(m.ioc_candidates("IOCs:"), [])
+        self.assertEqual(m.ioc_candidates(""), [])
+
+    def test_ioc_candidates_alternation(self):
+        # one name under several suffixes, as Unit 42 writes it
+        self.assertEqual(m.ioc_candidates("lanmao666[.](xyz|com) - gateway"), ["lanmao666.xyz", "lanmao666.com"])
+        self.assertEqual(m.ioc_candidates("(a.b.evil[.]com|c.evil.net)"), ["a.b.evil.com", "c.evil.net"])
+        # a description, not a name
+        self.assertEqual(m.ioc_candidates("x.(top|space) names"), ["x.top", "x.space"])
+        self.assertEqual(m.ioc_candidates("evil.(com)"), [])
 
     def test_talos(self):
         s = m.ParseStats()
-        out = m.parse_talos(talos_tarball(), "malware", s)
+        out = m.parse_iocs(talos_tarball(), "malware", s)
         # only *.txt files: the .json and .py names are not read
         self.assertEqual(out, {
             "c2.talos-evil.com": "malware",
@@ -232,27 +289,67 @@ class TestParsers(unittest.TestCase):
         self.assertEqual(s.lines, 11)
         self.assertEqual((s.matched, s.duplicates, s.invalid, s.skipped), (3, 1, 2, 5))
 
+    def test_unit42(self):
+        s = m.ParseStats()
+        out = m.parse_iocs(talos_tarball(UNIT42_FILES), "malware", s, **m.IOC_FORMATS["unit42"])
+        self.assertEqual(out, {
+            # defanged indicator lines only: not the references, the blog
+            # link, the file name or the quoted Received: header
+            "c2.unit42-evil.com": "malware",
+            "cdn.unit42-evil.com": "malware",
+            "backup.unit42-evil.net": "malware",
+            "spare.xyz": "malware",
+            "spare.com": "malware",
+            # .md and extensionless reports are read, .json is not
+            "md-only.unit42-evil.org": "malware",
+            "noext.unit42-evil.org": "malware",
+            # github.com is listed here; merge() drops it (SHARED_HOSTS)
+            "github.com": "malware",
+        })
+        # not ident.me (a line marked not malicious), not oracle/cisco
+        # (a section of legitimate domains)
+        self.assertEqual(s.files, 5)
+        self.assertEqual((s.matched, s.duplicates, s.invalid), (8, 1, 0))
+
+    def test_unit42_benign_section_ends_at_next_heading(self):
+        files = {"x/a.txt": "LEGITIMATE DOMAINS:\n- good[.]com\nC2:\n- bad[.]com\n- also legitimate: good2[.]com\n"}
+        out = m.parse_iocs(talos_tarball(files), "malware", m.ParseStats(), **m.IOC_FORMATS["unit42"])
+        self.assertEqual(out, {"bad.com": "malware"})
+
+    def test_talos_reads_every_line(self):
+        # Talos lists plain URLs too: every line counts, .md files are not read
+        files = {"x/a.txt": "http://plain.evil.com/x\nhxxp://fanged[.]evil.com/x\n", "x/b.md": "md.evil.com\n"}
+        out = m.parse_iocs(talos_tarball(files), "malware", m.ParseStats(), **m.IOC_FORMATS["talos"])
+        self.assertEqual(set(out), {"plain.evil.com", "fanged.evil.com"})
+
+    def test_shared_hosts(self):
+        for h in ["drive.google.com", "discord.com", "workers.dev", "bit.ly", "t.me", "s3.amazonaws.com", "ipinfo.io"]:
+            self.assertIn(h, m.SHARED_HOSTS)
+        for h in m.SHARED_HOSTS:
+            self.assertEqual(m.normalize(h), h, h)
+
     def test_talos_not_an_archive(self):
         with self.assertRaises(ValueError):
-            m.parse_talos(b"evil.com\n", "malware", m.ParseStats())
+            m.parse_iocs(b"evil.com\n", "malware", m.ParseStats())
         with self.assertRaises(ValueError):
-            m.parse_talos(b"", "malware", m.ParseStats())
+            m.parse_iocs(b"", "malware", m.ParseStats())
         whole = talos_tarball()
         with self.assertRaises(ValueError):
-            m.parse_talos(whole[: len(whole) // 2], "malware", m.ParseStats())
+            m.parse_iocs(whole[: len(whole) // 2], "malware", m.ParseStats())
 
     def test_talos_member_too_large(self):
         big = {"IOCs-main/x.txt": "a.com\n" * (m.MAX_MEMBER // 6 + 1)}
         with self.assertRaises(ValueError):
-            m.parse_talos(talos_tarball(big), "malware", m.ParseStats())
+            m.parse_iocs(talos_tarball(big), "malware", m.ParseStats())
 
 
 class TestConfig(Base):
     def test_load(self):
         cfg = m.load_config(self.cfg_path)
-        self.assertEqual([f.name for f in cfg.feeds], ["phish", "hosts", "ibx", "talos"])
+        self.assertEqual([f.name for f in cfg.feeds], ["phish", "hosts", "ibx", "talos", "unit42"])
         self.assertEqual(cfg.allowlist, {"mine.example.edu"})
-        self.assertEqual(cfg.protect, {"google.com"})
+        # the config's names and the built-in shared hosts
+        self.assertEqual(cfg.protect, m.SHARED_HOSTS | {"google.com"})
 
     def test_unknown_category(self):
         self.cfg_path.write_text(CONFIG.format(d=self.d).replace('category = "phishing"', 'category = "nope"', 1))
@@ -272,8 +369,9 @@ class TestConfig(Base):
         (tmp / "allowlist.txt").write_text((repo / "allowlist.example.txt").read_text())
         cfg = m.load_config(tmp / "config.toml")
         self.assertTrue(all(f.enabled for f in cfg.feeds))
-        self.assertEqual(len(cfg.feeds), 6)
-        self.assertEqual([f.format for f in cfg.feeds if f.format == "talos"], ["talos"])
+        self.assertEqual(len(cfg.feeds), 7)
+        self.assertEqual([f.format for f in cfg.feeds if f.format in m.IOC_FORMATS], ["talos", "unit42"])
+        self.assertFalse(cfg.protect - m.SHARED_HOSTS & m.SHARED_HOSTS)
 
 
 class TestUpdate(Base):
@@ -282,20 +380,29 @@ class TestUpdate(Base):
         self.assertEqual(rc, 0, err)
         lines, text = self.map_lines()
         self.assertEqual(lines, [
+            "backup.unit42-evil.net THREAT_MALWARE",
             "bad.example.org THREAT_PHISHING",
             "c2.talos-evil.com THREAT_MALWARE",
+            "c2.unit42-evil.com THREAT_MALWARE",
+            "cdn.unit42-evil.com THREAT_MALWARE",
             "evil.example.com THREAT_PHISHING",
             "hosted.example.com THREAT_PHISHING",
+            "md-only.unit42-evil.org THREAT_MALWARE",
+            "noext.unit42-evil.org THREAT_MALWARE",
             "phish.example.io THREAT_PHISHING",
             # phishing in one feed, malware in another: the higher rank wins
             "shared.example.net THREAT_MALWARE",
+            "spare.com THREAT_MALWARE",
+            "spare.xyz THREAT_MALWARE",
             "www.talos-evil.com THREAT_MALWARE",
         ])
-        self.assertIn("# all categories: 7", text)
+        self.assertIn("# all categories: 14", text)
         self.assertIn("# entries: 4", (self.d / "out/phishing.map").read_text())
         self.assertIn("# feed talos: 3 names, 2 invalid", text)
         self.assertIn("talos: 3 names, 2 invalid, 5 skipped, 1 listed again, 2 files", err)
-        self.assertIn("# dropped: 2 allowlisted, 1 protected", text)
+        self.assertIn("unit42: 8 names, 0 invalid", err)
+        # google.com from the config's protect, github.com from SHARED_HOSTS
+        self.assertIn("# dropped: 2 allowlisted, 2 protected", text)
         self.assertEqual(os.stat(self.d / "out/phishing.map").st_mode & 0o777, 0o644)
 
     def test_unchanged_is_not_rewritten(self):
@@ -319,7 +426,7 @@ class TestUpdate(Base):
         feeds = {k: err304 for k in FEEDS}
         rc, _, err = self.run_main("update", feeds=feeds)
         self.assertEqual(rc, 0, err)
-        self.assertEqual(len(self.map_lines()[0]), 7)
+        self.assertEqual(len(self.map_lines()[0]), 14)
 
     def test_failed_feed_uses_cache_and_warns(self):
         self.run_main("update")
@@ -328,7 +435,7 @@ class TestUpdate(Base):
         rc, _, err = self.run_main("-q", "update", feeds=feeds)
         self.assertEqual(rc, 1)
         self.assertIn("using the cached copy", err)
-        self.assertEqual(len(self.map_lines()[0]), 7)
+        self.assertEqual(len(self.map_lines()[0]), 14)
 
     def test_stale_cache_dropped(self):
         self.run_main("update")
@@ -347,11 +454,12 @@ class TestUpdate(Base):
         feeds = {k: "" for k in FEEDS}
         feeds["https://feeds.invalid/ibx.csv"] = "type,indicator,classification\n"
         feeds["https://feeds.invalid/iocs.tar.gz"] = talos_tarball({})
+        feeds["https://feeds.invalid/unit42.tar.gz"] = talos_tarball({})
         feeds["https://feeds.invalid/phish.txt"] = "evil.example.com\n"
         rc, _, err = self.run_main("update", feeds=feeds)
         self.assertEqual(rc, 1)
         self.assertIn("maps not replaced", err)
-        self.assertEqual(len(self.map_lines()[0]), 7)
+        self.assertEqual(len(self.map_lines()[0]), 14)
         rc, _, _ = self.run_main("update", "--force", feeds=feeds)
         self.assertEqual(self.map_lines()[0], ["evil.example.com THREAT_PHISHING"])
 
@@ -361,7 +469,7 @@ class TestUpdate(Base):
             (self.d / f"out/{cat}.map").unlink()
         rc, _, err = self.run_main("update", "--offline", feeds={})
         self.assertEqual(rc, 0, err)
-        self.assertEqual(len(self.map_lines()[0]), 7)
+        self.assertEqual(len(self.map_lines()[0]), 14)
 
 
 class TestMapFormat(Base):
