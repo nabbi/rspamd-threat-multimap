@@ -26,8 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - run: python -m pip install ruff
-      - run: ruff check --line-length 130 .
+      - run: python -m pip install ruff==0.15.12
+      - run: ruff check .
       - run: sudo apt-get update && sudo apt-get install -y luajit
       - name: Lua syntax
         run: luajit -bl rspamd/lua.local.d/selectors/threat_domains.lua > /dev/null

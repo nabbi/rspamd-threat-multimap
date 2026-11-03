@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import rspamd_threat_multimap as m  # noqa: E402
+import rspamd_threat_multimap as m
 
 CONFIG = """
 output = "{d}/out/threat.map"
@@ -49,7 +49,8 @@ enabled = false
 """
 
 FEEDS = {
-    "https://feeds.invalid/phish.txt": "# header\nevil.example.com\nBAD.Example.org.  # inline\n\nshared.example.net\ngoogle.com\nmine.example.edu\nsub.mine.example.edu\n",
+    "https://feeds.invalid/phish.txt": "# header\nevil.example.com\nBAD.Example.org.  # inline\n\n"
+    "shared.example.net\ngoogle.com\nmine.example.edu\nsub.mine.example.edu\n",
     "https://feeds.invalid/hosts.txt": "0.0.0.0 hosted.example.com\n127.0.0.1 localhost\n0.0.0.0 0.0.0.0\nnot a hosts line\n",
     "https://feeds.invalid/ibx.csv": "type,indicator,classification,detected_date\n"
     "domain,shared.example.net,malicious,2026-01-01\n"

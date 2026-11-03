@@ -180,7 +180,7 @@ def parse_infoblox(text: str, classes: dict[str, str], stats: ParseStats) -> dic
     return out
 
 
-def parse(feed: "Feed", text: str) -> tuple[dict[str, str], ParseStats]:
+def parse(feed: Feed, text: str) -> tuple[dict[str, str], ParseStats]:
     stats = ParseStats()
     if feed.format == "domain":
         return parse_domain(text, feed.category, stats), stats
@@ -304,7 +304,7 @@ class Log:
         if not self.quiet:
             print(msg, file=sys.stderr)
 
-    def warn(self, msg: str) -> None:
+    def warning(self, msg: str) -> None:
         self.problems += 1
         print(f"warning: {msg}", file=sys.stderr)
 
@@ -340,14 +340,14 @@ def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> str | Non
 
     def cached(reason: str) -> str | None:
         if not data_path.exists():
-            log.warn(f"{feed.name}: {reason}, and no cached copy")
+            log.warning(f"{feed.name}: {reason}, and no cached copy")
             return None
         age = time.time() - meta.get("fetched", data_path.stat().st_mtime)
         if not offline and age > cfg.max_cache_age:
-            log.warn(f"{feed.name}: {reason}, cached copy too old ({age / 3600:.0f}h), feed dropped")
+            log.warning(f"{feed.name}: {reason}, cached copy too old ({age / 3600:.0f}h), feed dropped")
             return None
         if not offline:
-            log.warn(f"{feed.name}: {reason}, using the cached copy ({age / 3600:.1f}h old)")
+            log.warning(f"{feed.name}: {reason}, using the cached copy ({age / 3600:.1f}h old)")
         return data_path.read_text(encoding="utf-8", errors="replace")
 
     if offline:
@@ -476,11 +476,11 @@ def collect(cfg: Config, log: Log, offline: bool = False, keep_sources: bool = F
         try:
             names, s = parse(feed, text)
         except ValueError as e:
-            log.warn(f"{feed.name}: {e}")
+            log.warning(f"{feed.name}: {e}")
             stats[feed.name] = {"error": True}
             continue
         if s.matched == 0:
-            log.warn(f"{feed.name}: no names parsed ({s.lines} lines)")
+            log.warning(f"{feed.name}: no names parsed ({s.lines} lines)")
         log.info(f"{feed.name}: {s.matched} names, {s.invalid} invalid, {s.skipped} skipped")
         stats[feed.name] = s.as_dict()
         parsed.append((feed, names))
@@ -507,10 +507,10 @@ def cmd_update(cfg: Config, args, log: Log) -> int:
         prev_count, prev_body = _previous(cfg.output)
         total = len(res.entries)
         if not args.force and prev_count and total < prev_count * cfg.min_ratio:
-            log.warn(f"{total} entries is under {cfg.min_ratio:.0%} of the current {prev_count}; map not replaced (--force)")
+            log.warning(f"{total} entries is under {cfg.min_ratio:.0%} of the current {prev_count}; map not replaced (--force)")
             return 1
         if total == 0:
-            log.warn("no entries; map not replaced")
+            log.warning("no entries; map not replaced")
             return 1
         if body == prev_body and not args.force:
             log.info(f"{cfg.output}: unchanged ({total} entries)")
