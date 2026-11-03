@@ -2,8 +2,8 @@
 """rspamd-threat-multimap: build an rspamd multimap of high-risk threat domains.
 
 Downloads public threat feeds (phishing and malware domains, the IOC lists
-of Cisco Talos and Palo Alto Unit 42), validates and merges them into one
-map per category
+of Cisco Talos, Palo Alto Unit 42, ESET, Bitdefender, Sophos, Zscaler and
+Netskope), validates and merges them into one map per category
 (``<category>.map``, a domain per line), each read by one rspamd multimap
 rule (rspamd/local.d/multimap.conf).
 The selector in rspamd/lua.local.d/selectors/threat_domains.lua feeds those
@@ -42,11 +42,11 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
-FORMATS = ("domain", "hosts", "infoblox", "talos", "unit42")
+FORMATS = ("domain", "hosts", "infoblox", "talos", "unit42", "eset", "bitdefender", "sophos", "zscaler", "netskope")
 MAX_MEMBER = 8 * 1024 * 1024  # one file inside an IOC archive
 
 # Top-level domains: IANA's list, version 2026110300
@@ -155,11 +155,14 @@ bitbucket.org www.npmjs.com registry.npmjs.org pypi.org files.pythonhosted.org r
 crates.io huggingface.co nodejs.org jsdelivr.net cdn.jsdelivr.net unpkg.com jspm.dev
 google.com www.google.com drive.google.com docs.google.com sites.google.com script.google.com
 forms.gle chromewebstore.google.com chrome.google.com feedproxy.google.com googleapis.com
+play.google.com groups.google.com apps.apple.com
 storage.googleapis.com firebasestorage.googleapis.com firebasestorage.google.com googleusercontent.com
 appspot.com web.app firebaseapp.com firebaseio.com a.run.app run.app blogspot.com youtube.com
 www.youtube.com youtu.be gmail.com
 microsoft.com www.microsoft.com learn.microsoft.com msrc.microsoft.com blogs.microsoft.com
 azure.microsoft.com login.microsoftonline.com onedrive.live.com 1drv.ms api.onedrive.com live.com
+sway.cloud.microsoft sway.office.com updates.microsoft.com update.microsoft.com windowsupdate.com
+download.microsoft.com get.adobe.com
 office.com outlook.com sharepoint.com onmicrosoft.com windows.net blob.core.windows.net
 web.core.windows.net azurefd.net azurewebsites.net azure.com cloudapp.azure.com
 amazon.com amazonaws.com s3.amazonaws.com checkip.amazonaws.com cloudfront.net amazonses.com
@@ -179,7 +182,7 @@ notion.site lovable.app created.app b-cdn.net ngrok.io ngrok.app ngrok-free.app
 duckdns.org dyna-ns.net no-ip.org ddns.net sytes.net serveftp.com hopto.org zapto.org myftp.org
 docusign.net docusign.com constantcontact.com hubspotemail.net list-manage.com mailchimp.com
 sendgrid.net exacttarget.com salesforce.com yahoo.com facebook.com www.facebook.com twitter.com
-x.com linkedin.com www.linkedin.com instagram.com medium.com reddit.com steamcommunity.com
+x.com linkedin.com www.linkedin.com instagram.com medium.com reddit.com www.reddit.com steamcommunity.com
 chatgpt.com openai.com api.openai.com openrouter.ai getsession.org example.com example.net example.org
 ip-api.com ipinfo.io ifconfig.me api.ipify.org ipify.org ipecho.net ident.me geoplugin.net
 reallyfreegeoip.org icanhazip.com ipv4.icanhazip.com myexternalip.com curlmyip.net ip.sb
@@ -245,7 +248,7 @@ class ParseStats:
     invalid: int = 0
     skipped: int = 0  # comments, empty lines, rows of another type or class
     duplicates: int = 0  # a name listed again
-    files: int = 0  # talos, unit42: files read from the archive
+    files: int = 0  # IOC archives: files read
 
     def add(self, out: dict[str, str], name: str, category: str) -> None:
         if name in out:
@@ -344,10 +347,13 @@ _TLD_LIKE = re.compile(r"^(?:[a-z]{2,}|xn--[a-z0-9-]+)$", re.I)
 # name.(xyz|com): one name under several suffixes
 _ALTERNATION = re.compile(r"^(?P<stem>[^\s()|]+\.)\((?P<alts>[a-z0-9.-]+(?:\|[a-z0-9.-]+)+)\)$", re.I)
 # A report's section heading ("REFERENCES:", "QAKBOT TRAFFIC TO LEGITIMATE
-# DOMAINS:") and the words that mark a line, or a whole section, as naming
-# sites that are not the threat
-_HEADING = re.compile(r"^[A-Z][A-Z0-9 ()/,:.'-]*:\s*$")
+# DOMAINS:", AsciiDoc "== C&C servers", Markdown "## Domains") and the
+# words that mark a line, a row or a whole section as naming sites that
+# are not the threat
+_HEADING = re.compile(r"^(?:[A-Z][A-Z0-9 ()/,:.'-]*:|=+ \S.*|#+ \S.*)\s*$")
 _BENIGN = re.compile(r"legitimate|not (?:inherently )?malicious", re.I)
+# The quoting around a name in a report: `name`, AsciiDoc `++name++`
+_QUOTES = "\"'<>()[]{}`+"
 
 
 def refang(text: str) -> str:
@@ -365,13 +371,13 @@ def ioc_candidates(line: str) -> list[str]:
     out = []
     tokens = []
     for tok in re.split(r"[\s,;]+", refang(line)):
-        m = _ALTERNATION.match(tok.strip("\"'<>[]{}"))
+        m = _ALTERNATION.match(tok.strip(_QUOTES.replace("()", "")))
         if m:
             tokens += [m.group("stem") + alt for alt in m.group("alts").split("|")]
         else:
             tokens += tok.split("|")
     for tok in tokens:
-        tok = tok.strip("\"'<>()[]{}")
+        tok = tok.strip(_QUOTES)
         m = _URL_HOST.match(tok)
         if m:
             tok = m.group("host")
@@ -386,8 +392,9 @@ def ioc_candidates(line: str) -> list[str]:
 
 
 # The IOC archives: which files of the GitHub archive are read (by
-# extension; "" is a file without one) and whether a name counts only on a
-# defanged line.
+# extension; "" is a file without one), whether a name counts only on a
+# defanged line, and whether .csv files are tables read by row (an indicator type
+# column: only domain and URL rows count) instead of by line.
 #   talos   Cisco-Talos/IOCs: a .txt list per blog post, beside STIX .json
 #           files that name fewer hosts and .py/.yar tooling. Plain URL
 #           lists are common, so every line counts.
@@ -397,49 +404,127 @@ def ioc_candidates(line: str) -> list[str]:
 #           (linkedin.com, x.com, blog posts), file names (invoice.zip)
 #           and mail servers in quoted headers are not, so only a
 #           defanged line names a threat.
+#   eset    eset/malware-ioc: an AsciiDoc README per campaign (bullet
+#           lists, tables, URL blocks), beside hash lists, MISP JSON and
+#           YARA. Indicators are defanged; the WeLiveSecurity and MITRE
+#           links are not.
+#   bitdefender  bitdefender/malware-ioc: a CSV per report (indicator_type,
+#           [nature, hash_type,] data, ...; a `nature` of "legitimate" is
+#           an abused benign host), and older campaign folders with
+#           defanged domain lists in .txt.
+#   sophos  sophoslabs/IoCs: a CSV per report (Indicator_type, Data,
+#           Note), names plain or defanged, URLs often plain.
+#   zscaler ThreatLabz/iocs: .txt lists per campaign (c2s.txt,
+#           hashes.txt, ...), defanged, with "# comment" headings; the
+#           DNS, WHOIS, password and decrypted-string dumps beside them
+#           are plain, so only a defanged line names a threat.
+#   netskope  netskopeoss/NetskopeThreatLabsIOCs: a Markdown README per
+#           campaign (tables, code blocks), defanged; the blog and MITRE
+#           links are not. The .txt files beside them are decrypted
+#           strings and config lists, not read.
 IOC_FORMATS = {
     "talos": {"suffixes": (".txt",), "defanged_only": False},
     "unit42": {"suffixes": (".txt", ".md", ""), "defanged_only": True},
+    "eset": {"suffixes": (".adoc",), "defanged_only": True},
+    "bitdefender": {"suffixes": (".csv", ".txt"), "defanged_only": True, "tables": True},
+    "sophos": {"suffixes": (".csv",), "tables": True},
+    "zscaler": {"suffixes": (".txt",), "defanged_only": True},
+    "netskope": {"suffixes": (".md",), "defanged_only": True},
 }
+# CSV columns: the indicator's type, its value, its nature (Bitdefender:
+# "malicious" or "legitimate"); the rest is notes. Only these types count.
+_CSV_TYPE = ("indicator_type", "indicator", "type")
+_CSV_DATA = ("data",)
+_CSV_NATURE = ("nature",)
+_CSV_HOST_TYPES = {"domain", "url", "url_path", "domain_port", "hostname", "fqdn"}
+
+
+def _add_candidates(line: str, out: dict[str, str], category: str, stats: ParseStats) -> None:
+    candidates = ioc_candidates(line)
+    if not candidates:
+        stats.skipped += 1
+    for cand in candidates:
+        name = normalize(cand)
+        if name is None:
+            stats.invalid += 1
+        else:
+            stats.add(out, name, category)
+
+
+def _ioc_lines(text: str, out: dict[str, str], category: str, stats: ParseStats, defanged_only: bool) -> None:
+    """A report: indicators between prose and headings. A heading names
+    no threat; one saying legitimate or not malicious opens a section
+    that is skipped whole, to the next heading."""
+    benign_section = False
+    for raw in text.splitlines():
+        stats.lines += 1
+        line = raw.strip()
+        if _HEADING.match(line):
+            benign_section = bool(_BENIGN.search(line))
+            stats.skipped += 1
+            continue
+        if benign_section or _BENIGN.search(line) or (defanged_only and not _DEFANGED.search(line)):
+            stats.skipped += 1
+            continue
+        _add_candidates(line, out, category, stats)
+
+
+def _ioc_rows(text: str, out: dict[str, str], category: str, stats: ParseStats) -> None:
+    """An IOC table: a header naming the indicator type and data columns
+    (Sophos: Indicator_type, Data, Note; Bitdefender: indicator_type,
+    nature, hash_type, data, ...), then a row per indicator. Only domain
+    and URL rows count, and not one whose nature is legitimate or whose
+    note says so. A file with another header is not an IOC table."""
+    rows = csv.reader(io.StringIO(text.lstrip("\ufeff")))
+    header = [h.strip().lower() for h in next(rows, [])]
+    cols = {}
+    for key, names in (("type", _CSV_TYPE), ("data", _CSV_DATA), ("nature", _CSV_NATURE)):
+        cols[key] = next((i for i, h in enumerate(header) if h in names), None)
+    if cols["type"] is None or cols["data"] is None:
+        return
+    for row in rows:
+        stats.lines += 1
+        if len(row) <= max(cols["type"], cols["data"]):
+            stats.skipped += 1
+            continue
+        if row[cols["type"]].strip().lower() not in _CSV_HOST_TYPES:
+            stats.skipped += 1
+            continue
+        if cols["nature"] is not None and len(row) > cols["nature"] and row[cols["nature"]].strip().lower() == "legitimate":
+            stats.skipped += 1
+            continue
+        notes = " ".join(v for i, v in enumerate(row) if i != cols["data"])
+        if _BENIGN.search(notes):
+            stats.skipped += 1
+            continue
+        _add_candidates(row[cols["data"]], out, category, stats)
 
 
 def parse_iocs(data: bytes, category: str, stats: ParseStats, suffixes: tuple[str, ...] = (".txt",),
-               defanged_only: bool = False) -> dict[str, str]:
+               defanged_only: bool = False, tables: bool = False) -> dict[str, str]:
     """A GitHub archive (tar.gz) of IOC lists, one file per report: mixed
     hashes, IP addresses, URLs, domains and email addresses, usually
     defanged, between prose and headings. Keeps the host names, bare or
     from URLs, once each; the rest is skipped. A line, or a whole section
     under a heading, saying its sites are legitimate or not malicious is
-    skipped too, as is every undefanged line when `defanged_only`."""
+    skipped too, as is every undefanged line when `defanged_only`. With
+    `tables`, .csv files are IOC tables read by row (_ioc_rows)."""
     out: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
             for member in tar:
-                if not member.isfile() or os.path.splitext(member.name)[1].lower() not in suffixes:
+                suffix = os.path.splitext(member.name)[1].lower()
+                if not member.isfile() or suffix not in suffixes:
                     continue
                 if member.size > MAX_MEMBER:
                     raise ValueError(f"{member.name}: {member.size} bytes, larger than {MAX_MEMBER >> 20} MiB")
                 stats.files += 1
                 with tar.extractfile(member) as f:
                     text = f.read().decode("utf-8", errors="replace")
-                benign_section = False
-                for raw in text.splitlines():
-                    stats.lines += 1
-                    line = raw.strip()
-                    if _HEADING.match(line):
-                        benign_section = bool(_BENIGN.search(line))
-                    if benign_section or _BENIGN.search(line) or (defanged_only and not _DEFANGED.search(line)):
-                        stats.skipped += 1
-                        continue
-                    candidates = ioc_candidates(line)
-                    if not candidates:
-                        stats.skipped += 1
-                    for cand in candidates:
-                        name = normalize(cand)
-                        if name is None:
-                            stats.invalid += 1
-                        else:
-                            stats.add(out, name, category)
+                if tables and suffix == ".csv":
+                    _ioc_rows(text, out, category, stats)
+                else:
+                    _ioc_lines(text, out, category, stats, defanged_only)
     except (tarfile.TarError, OSError, EOFError) as e:
         raise ValueError(f"not a tar.gz archive: {e}") from None
     return out

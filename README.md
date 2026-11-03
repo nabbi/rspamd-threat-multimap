@@ -42,25 +42,32 @@ mail, they list the marketing and bulk senders people subscribe to
 | `infoblox` | malware, phishing | 26,734 | [Infoblox threat intelligence](https://github.com/infobloxopen/threat-intelligence): malicious, clickfix, voltastealer, phishing (not "suspicious") |
 | `blp-ransomware` | malware | 1,904 | [The Block List Project](https://github.com/blocklistproject/Lists) ransomware |
 | `talos` | malware | 2,649 | [Cisco Talos IOCs](https://github.com/Cisco-Talos/IOCs): the hosts in the IOC lists of its blog posts, 2022 on |
-| `unit42` | malware | 7,340 | [Unit 42 timely threat intel](https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel): the defanged hosts in Palo Alto Networks' reports, 2020 on |
+| `unit42` | malware | 7,361 | [Unit 42 timely threat intel](https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel): the defanged hosts in Palo Alto Networks' reports, 2020 on |
+| `eset` | malware | 1,496 | [ESET Research IOCs](https://github.com/eset/malware-ioc): the defanged hosts in the AsciiDoc reports behind its WeLiveSecurity posts, 2016 on |
+| `bitdefender` | malware | 5,003 | [Bitdefender Labs IOCs](https://github.com/bitdefender/malware-ioc): the domain and URL rows of its CSV tables (not those marked legitimate), and older campaign domain lists |
+| `sophos` | malware | 6,600 | [Sophos X-Ops IOCs](https://github.com/sophoslabs/IoCs): the domain, URL and domain:port rows of its CSV tables, 2020 on |
+| `zscaler` | malware | 12,564 | [Zscaler ThreatLabz IOCs](https://github.com/ThreatLabz/iocs): the defanged hosts in its lists; 10,600 are the typosquatting domains of one brand-impersonation report |
+| `netskope` | malware | 2,143 | [Netskope Threat Labs IOCs](https://github.com/netskopeoss/NetskopeThreatLabsIOCs): the defanged hosts in its Markdown reports |
 | `hagezi-fake` (off) | fraud | ~17,500 | [HaGeZi](https://github.com/hagezi/dns-blocklists) fake shops and scams |
 | `blp-scam` (off) | fraud | ~8,500 | The Block List Project scam |
 
-\* 2026-11-03. Merged: 186,455 names. Feeds publish under their own
+\* 2026-11-03. Merged: 214,093 names. Feeds publish under their own
 terms; check them for your use. This project downloads them; it does not
 redistribute them.
 
-The Talos and Unit 42 feeds are each repository's GitHub archive (one
-tar.gz of 2.4 MB and 0.8 MB, fetched again only when a report is added).
-A report mixes hashes, IP addresses, URLs, domains and email addresses,
-usually defanged (`evil[.]com`, `hxxps[:]//`), with prose and headings.
-The parser undoes the defanging and keeps the host names, bare or from
-URLs (`name[.](xyz|com)` is both names), and drops the rest: hashes, IPs
-and email addresses, and file names (`auto.exe`) because their suffix is
-not a top-level domain. A host named by several reports is listed once.
-A line, or a whole section, that the report marks as legitimate or not
-malicious (the sites an infected host calls to check its connectivity,
-the brand a page spoofs) is skipped.
+The vendor feeds (Talos, Unit 42, ESET, Bitdefender, Sophos, Zscaler,
+Netskope) are each repository's GitHub archive: one tar.gz, 0.3 to 9 MB,
+fetched again only when a report is added. A report mixes hashes, IP
+addresses, URLs, domains and email addresses, usually defanged
+(`evil[.]com`, `hxxps[:]//`), with prose, headings and tables. The
+parser undoes the defanging and keeps the host names, bare or from URLs
+(`name[.](xyz|com)` is both names), and drops the rest: hashes, IPs and
+email addresses, and file names (`auto.exe`) because their suffix is not
+a top-level domain. A host named by several reports is listed once. A
+heading names no threat. A line, or a whole section, that the report
+marks as legitimate or not malicious (the sites an infected host calls to
+check its connectivity, the brand a page spoofs, a service the malware
+abuses) is skipped.
 
 Talos (`.txt` lists only; the STIX `.json` files beside them name fewer
 hosts) often lists plain URLs, so every line counts. Unit 42 reports
@@ -69,7 +76,25 @@ and leave the rest plain: the LinkedIn and X posts under REFERENCES, the
 vendor blogs in NOTES, file names (`invoice.zip`: `.zip` is a top-level
 domain) and the mail servers in quoted `Received:` headers. So in the
 `unit42` format only a defanged line names a threat, which drops those
-and keeps 7,340 of the 7,871 names a plain read would take.
+and keeps 7,361 of the 7,853 names a plain read would take.
+
+ESET (`.adoc`: bullet lists, tables and URL blocks, beside hash lists,
+MISP JSON and YARA), Zscaler (`.txt` lists per campaign, beside DNS,
+WHOIS and password dumps) and Netskope (a Markdown README per campaign,
+beside decrypted strings and scripts) are read the same way: only a
+defanged line counts, so their blog and MITRE links, hosting providers
+and file names are not. That costs ESET about 1,300 plain names, mostly
+old DGA and dynamic-DNS hosts, and Zscaler about 1,450, mostly a DGA
+list and `.onion` names. Sophos and Bitdefender publish CSV tables
+instead (an indicator type, the value, a note): only the `domain`,
+`url` and `domain_port` rows count, hashes, IPs, file names, commands
+and wallet addresses do not, and a Bitdefender row whose `nature` is
+`legitimate` (an abused benign host) is skipped. Zscaler is mostly the
+10,600 typosquatting domains of one brand-impersonation report
+(`phishing/typosquatting_brand_impersonation_domains.txt`): registered
+look-alikes of brands, not all of them seen in attacks. They score as
+malware here because a feed has one category; drop the feed, or copy it
+with `category = "phishing"`, if that is too strong.
 
 Both name payloads, phishing pages and C2 channels on services everyone
 shares (`drive.google.com`, `github.com`, `discord.com`, `t.me`, `bit.ly`,
@@ -121,15 +146,18 @@ map.
 
 Shared hosts are never listed exactly; their subdomains still can be
 (`phish.sharepoint.com`, a tenant's `name.workers.dev`). The updater has
-a built-in list (`SHARED_HOSTS`, about 220 names): file, paste and
+a built-in list (`SHARED_HOSTS`, about 230 names): file, paste and
 link-shortening services (`drive.google.com`, `pastebin.com`, `bit.ly`),
 code and package registries (`github.com`, `rubygems.org`), cloud storage
 and web platforms (`s3.amazonaws.com`, `workers.dev`, `vercel.app`),
-messaging (`discord.com`, `t.me`), the mail and marketing senders a feed
-lists by mistake now and then (`gmail.com`, `sendgrid.net`), and the
-IP-check sites malware calls (`ipinfo.io`). IOC lists name them as the
-URL of a payload or a C2 channel; the host says nothing about a message,
-and most mail links to one. `protect` in `config.toml` adds your own
+app stores and forums (`play.google.com`, `apps.apple.com`,
+`www.reddit.com`), messaging (`discord.com`, `t.me`), the mail and
+marketing senders a feed lists by mistake now and then (`gmail.com`,
+`sendgrid.net`), the IP-check sites malware calls (`ipinfo.io`), and the
+vendor update hosts an adversary-in-the-middle report lists as spoofed
+(`updates.microsoft.com`, `get.adobe.com`). IOC lists name them as the
+URL of a payload, a malicious app or a C2 channel; the host says nothing
+about a message, and most mail links to one. `protect` in `config.toml` adds your own
 (the example names `zoom.us`, `box.com`, `webex.com`).
 
 ## Scores

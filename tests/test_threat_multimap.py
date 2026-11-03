@@ -122,6 +122,107 @@ UNIT42_FILES = {
 }
 
 
+ESET_FILES = {
+    "malware-ioc-master/campaign/README.adoc": (
+        "= Campaign X -- Indicators of Compromise\n\n"
+        "The blog post is available on WeLiveSecurity at\n"
+        "https://www.welivesecurity.com/en/eset-research/campaign-x/\n\n"
+        "== C&C servers\n\n"
+        "* `++c2.eset-evil[.]com++`\n"
+        "* `++https://dl.eset-evil[.]com/x/update.zip++`\n"
+        "* plain.eset-evil.com\n\n"
+        "=== Legitimate servers abused by malware authors\n\n"
+        "- `api.telegram[.]org`\n"
+        "- `srv70.putdrive[.]com` (IP: `188.165.14[.]185`)\n\n"
+        "== Network\n\n"
+        '[options="header"]\n'
+        "|===\n"
+        "| IP address | Domain | Details\n"
+        "| `38.180.76[.]31` | `table.eset-evil[.]com` | C&C server.\n"
+        "|===\n\n"
+        "== ESET detection names\n\n"
+        "- Win32/Agent.AGNF\n"
+    ),
+    "malware-ioc-master/campaign/samples.sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
+    "malware-ioc-master/campaign/misp-event.json": '{"value": "json-only[.]com"}',
+}
+
+BITDEFENDER_FILES = {
+    "malware-ioc-master/2026_05-report-iocs.csv": (
+        "indicator_type,nature,hash_type,data,additional_data,description\n"
+        "source,,,https://www.bitdefender.com/blog/businessinsights/report,,Report\n"
+        "file,malicious,md5,0554f3b69d39d175dd110d765c11347a,C:\\TEMP\\x.exe,loader\n"
+        "domain,malicious,,c2.bd-evil[.]com,,RAT C2 - masquerades as an antivirus vendor\n"
+        "url,malicious,,hxxps://dl.bd-evil[.]com/x/payload,,payload\n"
+        "url,legitimate,,hxxps://github[.]com/gentilkiwi/mimikatz/releases,,tool ingress\n"
+        "domain,legitimate,,ipinfo[.]io,,geolocation service abused\n"
+        "ip,malicious,,193[.]29[.]56[.]216,,C2 IP\n"
+    ),
+    "malware-ioc-master/2025_09_10-old-iocs.csv": (
+        "indicator_type,data,additional_data,description\n"
+        "domain,old.bd-evil[.]store,,Domain resolved via nslookup\n"
+        "url,hxxp://webhook[.]site/94f6da9d,,POST target\n"
+    ),
+    "malware-ioc-master/metamorfo_malware/domains.txt": "bank.bd-evil[.]webcindario[.]com\nplain.bd-evil.com\n",
+    "malware-ioc-master/metamorfo_malware/decrypted_strings.txt": "#sTrCmdOK#\nwscript.shell\n",
+    "malware-ioc-master/vapor_malware/urls.csv": ",URLs\n0,https://api.notatable.com\n",
+}
+
+SOPHOS_FILES = {
+    "IoCs-master/2026-01 campaign.csv": (
+        "\ufeffIndicator_type,Data,Note\r\n"
+        "domain,c2.sophos-evil.com,C2\r\n"
+        "url,hxxps[://]dl.sophos-evil[.]com/x.exe,payload\r\n"
+        "sha256,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,loader\r\n"
+        "domain,good.example.com,legitimate site posing as the lure\r\n"
+        "url_path,/a/b.php,path\r\n"
+        "ip,192.0.2.1,C2\r\n"
+        ",,\r\n"
+    ),
+    "IoCs-master/2309 other.csv": (
+        "Indicator,Data,Notes,,,\n"
+        "domain_port,c2b.sophos-evil.com:8080,C2,,,\n"
+        "filename,update.exe,dropper,,,\n"
+    ),
+    "IoCs-master/Ransomware_processes_stopped.csv": "Process name,Application\nsql.exe,notatable.com\n",
+    "IoCs-master/rules.yara": "rule x { strings: $a = \"yara-only.com\" condition: $a }\n",
+}
+
+ZSCALER_FILES = {
+    "iocs-main/loader/c2s.txt": (
+        "# Reference: https://www.zscaler.com/blogs/security-research/loader\n\n"
+        "# C2\n"
+        "c2.zs-evil[.]com\n"
+        "hxxps://dl.zs-evil[.]com/a/b\n"
+        "plain.zs-evil.com\n"
+    ),
+    "iocs-main/loader/hashes.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
+    "iocs-main/cluster/grand_cluster_nameservers.txt": "evil-plain.net.  21600 IN NS jimmy.ns.cloudflare.com.\n",
+    "iocs-main/cluster/grand_cluster_domain_whois.txt": "Registrar WHOIS Server: whois.publicdomainregistry.com\n",
+    "iocs-main/loader/rules.yar": "rule x { strings: $a = \"yara-only[.]com\" condition: $a }\n",
+}
+
+NETSKOPE_FILES = {
+    "NetskopeThreatLabsIOCs-main/Malware/Loader/IOCs/README.md": (
+        "# Loader\n\n"
+        "Blog: https://www.netskope.com/blog/loader\n\n"
+        "## Domains\n\n"
+        "| Domain | Role |\n"
+        "|--------|------|\n"
+        "| `c2.ns-evil[.]com` | C2 |\n"
+        "| `api.telegram[.]org` | Legitimate service abused for exfiltration |\n\n"
+        "## C2 addresses\n"
+        "```text\n"
+        "122.155.28[.]155:80/page/index.php\n"
+        "hxxps://dl.ns-evil[.]com/x\n"
+        "```\n"
+        "* plain.ns-evil.com\n"
+    ),
+    "NetskopeThreatLabsIOCs-main/Malware/Loader/IOCs/Loader_domains.txt": "txt-only[.]com\n",
+    "NetskopeThreatLabsIOCs-main/Malware/Loader/Scripts/decrypt.py": "HOST = 'py-only[.]com'\n",
+}
+
+
 def talos_tarball(files=TALOS_FILES):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -266,6 +367,12 @@ class TestParsers(unittest.TestCase):
         self.assertEqual(m.ioc_candidates("IOCs:"), [])
         self.assertEqual(m.ioc_candidates(""), [])
 
+    def test_ioc_candidates_quoting(self):
+        # AsciiDoc `++name++` and backticks, Markdown table cells
+        self.assertEqual(m.ioc_candidates("* `++c2.evil[.]com++`"), ["c2.evil.com"])
+        self.assertEqual(m.ioc_candidates("* `++https://dl.evil[.]com/x.zip++`"), ["dl.evil.com"])
+        self.assertEqual(m.ioc_candidates("| `38.180.76[.]31` | `x.evil[.]com` | C&C server."), ["x.evil.com"])
+
     def test_ioc_candidates_alternation(self):
         # one name under several suffixes, as Unit 42 writes it
         self.assertEqual(m.ioc_candidates("lanmao666[.](xyz|com) - gateway"), ["lanmao666.xyz", "lanmao666.com"])
@@ -316,6 +423,61 @@ class TestParsers(unittest.TestCase):
         out = m.parse_iocs(talos_tarball(files), "malware", m.ParseStats(), **m.IOC_FORMATS["unit42"])
         self.assertEqual(out, {"bad.com": "malware"})
 
+    def test_heading_names_no_threat(self):
+        # a Markdown or AsciiDoc heading, or "LABEL:", is not an indicator
+        # line, even where every line counts
+        files = {"x/a.txt": "# Reference: https://blog.example.com/x\n== See www.vendor.example ==\nevil.com\nC2 HOSTS:\n"}
+        out = m.parse_iocs(talos_tarball(files), "malware", m.ParseStats(), **m.IOC_FORMATS["talos"])
+        self.assertEqual(set(out), {"evil.com"})
+
+    def test_eset(self):
+        s = m.ParseStats()
+        out = m.parse_iocs(talos_tarball(ESET_FILES), "malware", s, **m.IOC_FORMATS["eset"])
+        # bullets, a URL, a table cell; not the plain name, the blog link,
+        # the legitimate-servers section (ended by the next heading), the
+        # hash list or the MISP event
+        self.assertEqual(set(out), {"c2.eset-evil.com", "dl.eset-evil.com", "table.eset-evil.com"})
+        self.assertEqual((s.files, s.matched, s.invalid), (1, 3, 0))
+
+    def test_bitdefender(self):
+        s = m.ParseStats()
+        out = m.parse_iocs(talos_tarball(BITDEFENDER_FILES), "malware", s, **m.IOC_FORMATS["bitdefender"])
+        self.assertEqual(set(out), {
+            # domain and url rows of both schemas; not the source, file
+            # and ip rows, nor the rows whose nature is legitimate
+            "c2.bd-evil.com", "dl.bd-evil.com", "old.bd-evil.store", "webhook.site",
+            # the campaign folders' defanged lists; not the plain name or
+            # the decrypted strings
+            "bank.bd-evil.webcindario.com",
+        })
+        # urls.csv has no indicator type column: read, nothing taken
+        self.assertEqual((s.files, s.matched, s.invalid), (5, 5, 0))
+
+    def test_sophos(self):
+        s = m.ParseStats()
+        out = m.parse_iocs(talos_tarball(SOPHOS_FILES), "malware", s, **m.IOC_FORMATS["sophos"])
+        # a BOM and CRLF, either header, plain or defanged, domain:port;
+        # not the hash, ip, file name, path-only or legitimate rows, nor a
+        # table of another kind
+        self.assertEqual(set(out), {"c2.sophos-evil.com", "dl.sophos-evil.com", "c2b.sophos-evil.com"})
+        self.assertEqual((s.files, s.lines, s.matched, s.invalid), (3, 9, 3, 0))
+
+    def test_zscaler(self):
+        s = m.ParseStats()
+        out = m.parse_iocs(talos_tarball(ZSCALER_FILES), "malware", s, **m.IOC_FORMATS["zscaler"])
+        # not the reference comment, the plain name, or the plain DNS and
+        # WHOIS dumps
+        self.assertEqual(set(out), {"c2.zs-evil.com", "dl.zs-evil.com"})
+        self.assertEqual((s.files, s.matched), (4, 2))
+
+    def test_netskope(self):
+        s = m.ParseStats()
+        out = m.parse_iocs(talos_tarball(NETSKOPE_FILES), "malware", s, **m.IOC_FORMATS["netskope"])
+        # table cells and code blocks; not the blog link, the legitimate
+        # service, the plain name, or the .txt and .py beside the README
+        self.assertEqual(set(out), {"c2.ns-evil.com", "dl.ns-evil.com"})
+        self.assertEqual((s.files, s.matched, s.invalid), (1, 2, 0))
+
     def test_talos_reads_every_line(self):
         # Talos lists plain URLs too: every line counts, .md files are not read
         files = {"x/a.txt": "http://plain.evil.com/x\nhxxp://fanged[.]evil.com/x\n", "x/b.md": "md.evil.com\n"}
@@ -323,7 +485,8 @@ class TestParsers(unittest.TestCase):
         self.assertEqual(set(out), {"plain.evil.com", "fanged.evil.com"})
 
     def test_shared_hosts(self):
-        for h in ["drive.google.com", "discord.com", "workers.dev", "bit.ly", "t.me", "s3.amazonaws.com", "ipinfo.io"]:
+        for h in ["drive.google.com", "discord.com", "workers.dev", "bit.ly", "t.me", "s3.amazonaws.com", "ipinfo.io",
+                  "play.google.com", "apps.apple.com", "sway.cloud.microsoft", "get.adobe.com", "www.reddit.com"]:
             self.assertIn(h, m.SHARED_HOSTS)
         for h in m.SHARED_HOSTS:
             self.assertEqual(m.normalize(h), h, h)
@@ -369,8 +532,10 @@ class TestConfig(Base):
         (tmp / "allowlist.txt").write_text((repo / "allowlist.example.txt").read_text())
         cfg = m.load_config(tmp / "config.toml")
         self.assertTrue(all(f.enabled for f in cfg.feeds))
-        self.assertEqual(len(cfg.feeds), 7)
-        self.assertEqual([f.format for f in cfg.feeds if f.format in m.IOC_FORMATS], ["talos", "unit42"])
+        self.assertEqual(len(cfg.feeds), 12)
+        self.assertEqual([f.format for f in cfg.feeds if f.format in m.IOC_FORMATS],
+                         ["talos", "unit42", "eset", "bitdefender", "sophos", "zscaler", "netskope"])
+        self.assertEqual(set(m.IOC_FORMATS), set(m.FORMATS) - {"domain", "hosts", "infoblox"})
         self.assertFalse(cfg.protect - m.SHARED_HOSTS & m.SHARED_HOSTS)
 
 

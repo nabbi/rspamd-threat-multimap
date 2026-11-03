@@ -37,10 +37,15 @@ fraud    = { symbol = "THREAT_FRAUD",    rank = 1 }
 
 # Feeds. format: domain (a name per line), hosts ("0.0.0.0 name"),
 # infoblox (combined.csv; `classes` maps its classification to a category,
-# classifications not listed are skipped), talos (a GitHub archive of
-# Cisco-Talos/IOCs: the host names in every .txt file), unit42 (a GitHub
-# archive of PaloAltoNetworks/Unit42-timely-threat-intel: the defanged host
-# names in every report).
+# classifications not listed are skipped), and one per vendor IOC
+# repository, each the GitHub archive (tar.gz) of the whole repository:
+# talos (Cisco-Talos/IOCs: the host names in every .txt file), unit42
+# (PaloAltoNetworks/Unit42-timely-threat-intel: the defanged host names in
+# every report), eset (eset/malware-ioc: the AsciiDoc reports), bitdefender
+# (bitdefender/malware-ioc: the CSV tables and domain lists), sophos
+# (sophoslabs/IoCs: the CSV tables), zscaler (ThreatLabz/iocs: the .txt
+# lists), netskope (netskopeoss/NetskopeThreatLabsIOCs: the Markdown
+# reports).
 
 # Phishing: OpenPhish, PhishTank and IPThreat, refreshed every 12 hours
 [[feed]]
@@ -95,6 +100,51 @@ category = "malware"
 name = "unit42"
 url = "https://github.com/PaloAltoNetworks/Unit42-timely-threat-intel/archive/refs/heads/main.tar.gz"
 format = "unit42"
+category = "malware"
+
+# ESET Research: the IOC reports behind its WeLiveSecurity posts (APT and
+# crimeware C2, download and exfiltration servers, phishing sites), 2016
+# on. Only defanged names count: the blog and MITRE links are plain.
+[[feed]]
+name = "eset"
+url = "https://github.com/eset/malware-ioc/archive/refs/heads/master.tar.gz"
+format = "eset"
+category = "malware"
+
+# Bitdefender Labs: a CSV per report (domain and URL rows; rows whose
+# nature is "legitimate", an abused benign host, are skipped) and the
+# older campaign folders' domain lists.
+[[feed]]
+name = "bitdefender"
+url = "https://github.com/bitdefender/malware-ioc/archive/refs/heads/master.tar.gz"
+format = "bitdefender"
+category = "malware"
+
+# Sophos X-Ops: a CSV per report (domain, URL and domain:port rows; hashes,
+# IPs, file names, commands and wallet addresses in them are not read).
+[[feed]]
+name = "sophos"
+url = "https://github.com/sophoslabs/IoCs/archive/refs/heads/master.tar.gz"
+format = "sophos"
+category = "malware"
+
+# Zscaler ThreatLabz: the .txt lists per campaign (C2 and payload hosts,
+# phishing and brand-impersonation domains; most of the names are the
+# typosquatting list of its brand-impersonation report). Only defanged
+# names count.
+[[feed]]
+name = "zscaler"
+url = "https://github.com/ThreatLabz/iocs/archive/refs/heads/main.tar.gz"
+format = "zscaler"
+category = "malware"
+
+# Netskope Threat Labs: a Markdown IOC report per campaign (malware
+# delivery, C2 and phishing hosts). Only defanged names count: the blog
+# links are plain.
+[[feed]]
+name = "netskope"
+url = "https://github.com/netskopeoss/NetskopeThreatLabsIOCs/archive/refs/heads/main.tar.gz"
+format = "netskope"
 category = "malware"
 
 # Lower risk, off by default: fake shops and scams, more false positives
