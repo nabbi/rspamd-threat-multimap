@@ -18,6 +18,8 @@ allowlist = "allowlist.txt"
 
 # Names never listed exactly (their subdomains still can be). Large shared
 # platforms: a feed listing one of these by mistake would hit most mail.
+# The second group are hosts attackers share with everyone else (Talos IOC
+# lists give the URL of a payload on them; the host says nothing).
 protect = [
   "amazon.com", "amazonaws.com", "amazonses.com", "apple.com", "icloud.com",
   "cloudflare.com", "docusign.net", "dropbox.com", "github.com",
@@ -26,6 +28,10 @@ protect = [
   "onmicrosoft.com", "outlook.com", "sharepoint.com", "yahoo.com",
   "constantcontact.com", "hubspotemail.net", "list-manage.com",
   "mailchimp.com", "sendgrid.net", "exacttarget.com", "salesforce.com",
+  "api.telegram.org", "bit.ly", "bitbucket.org", "discord.com",
+  "docs.google.com", "drive.google.com", "pastebin.com",
+  "raw.githubusercontent.com", "storage.googleapis.com", "transfer.sh",
+  "www.dropbox.com", "www.mediafire.com", "www.npmjs.com",
 ]
 
 # Category -> <category>.map and the symbol of the rule that reads it
@@ -38,7 +44,8 @@ fraud    = { symbol = "THREAT_FRAUD",    rank = 1 }
 
 # Feeds. format: domain (a name per line), hosts ("0.0.0.0 name"),
 # infoblox (combined.csv; `classes` maps its classification to a category,
-# classifications not listed are skipped).
+# classifications not listed are skipped), talos (a GitHub archive of
+# Cisco-Talos/IOCs: the host names in every .txt file).
 
 # Phishing: OpenPhish, PhishTank and IPThreat, refreshed every 12 hours
 [[feed]]
@@ -74,6 +81,15 @@ classes = { malicious = "malware", clickfix = "malware", voltastealer = "malware
 name = "blp-ransomware"
 url = "https://blocklistproject.github.io/Lists/alt-version/ransomware-nl.txt"
 format = "domain"
+category = "malware"
+
+# Cisco Talos: the hosts in the IOC lists of its blog posts (C2, payload
+# and phishing hosts), the whole repo as one archive. Only the .txt files
+# are read; hashes, IPs, email addresses and file names in them are not.
+[[feed]]
+name = "talos"
+url = "https://github.com/Cisco-Talos/IOCs/archive/refs/heads/main.tar.gz"
+format = "talos"
 category = "malware"
 
 # Lower risk, off by default: fake shops and scams, more false positives

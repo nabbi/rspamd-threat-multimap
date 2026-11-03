@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """rspamd-threat-multimap: build an rspamd multimap of high-risk threat domains.
 
-Downloads public threat feeds (phishing and malware domains), validates
-and merges them into one map per category (``<category>.map``, a domain per
-line), each read by one rspamd multimap rule (rspamd/local.d/multimap.conf).
+Downloads public threat feeds (phishing and malware domains, Cisco Talos
+IOC lists), validates and merges them into one map per category
+(``<category>.map``, a domain per line), each read by one rspamd multimap
+rule (rspamd/local.d/multimap.conf).
 The selector in rspamd/lua.local.d/selectors/threat_domains.lua feeds those
 rules every URL host in the message, with its parent domains, and the
 sender domains.
@@ -31,6 +32,7 @@ import json
 import os
 import re
 import sys
+import tarfile
 import tempfile
 import time
 import tomllib
@@ -39,17 +41,104 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
-FORMATS = ("domain", "hosts", "infoblox")
+FORMATS = ("domain", "hosts", "infoblox", "talos")
+MAX_MEMBER = 8 * 1024 * 1024  # one file inside a talos archive
 
-# Names that are never real hosts on the internet (RFC 6761, in-addr/ip6.arpa)
-RESERVED_TLDS = {"arpa", "example", "invalid", "local", "localhost", "test"}
+# Top-level domains: IANA's list, version 2026110300
+# (https://data.iana.org/TLD/tlds-alpha-by-domain.txt, refresh now and then),
+# plus 'onion' (RFC 7686), minus 'arpa' (in-addr/ip6, never a host). A name
+# under any other suffix ('auto.exe', 'go.oo', 'host.local') is not a hostname.
+_IANA_TLDS = """
+aaa aarp abb abbott abbvie abc able abogado abudhabi ac academy accenture accountant accountants aco actor ad ads
+adult ae aeg aero aetna af afl africa ag agakhan agency ai aig airbus airforce airtel akdn al alibaba alipay allfinanz
+allstate ally alsace alstom am amazon americanexpress americanfamily amex amfam amica amsterdam analytics android
+anquan anz ao aol apartments app apple aq aquarelle ar arab aramco archi army arpa art arte as asda asia associates at
+athleta attorney au auction audi audible audio auspost author auto autos aw aws ax axa az azure ba baby baidu banamex
+band bank bar barcelona barclaycard barclays barefoot bargains baseball basketball bauhaus bayern bb bbc bbt bbva bcg
+bcn bd be beats beauty beer berlin best bestbuy bet bf bg bh bharti bi bible bid bike bing bingo bio biz bj black
+blackfriday blockbuster blog bloomberg blue bm bms bmw bn bnpparibas bo boats boehringer bofa bom bond boo book
+booking bosch bostik boston bot boutique box br bradesco bridgestone broadway broker brother brussels bs bt build
+builders business buy buzz bv bw by bz bzh ca cab cafe cal call calvinklein cam camera camp canon capetown capital
+capitalone car caravan cards care career careers cars casa case cash casino cat catering catholic cba cbn cbre cc cd
+center ceo cern cf cfa cfd cg ch chanel channel charity chase chat cheap chintai christmas chrome church ci cipriani
+circle cisco citadel citi citic city ck cl claims cleaning click clinic clinique clothing cloud club clubmed cm cn co
+coach codes coffee college cologne com commbank community company compare computer comsec condos construction
+consulting contact contractors cooking cool coop corsica country coupon coupons courses cpa cr credit creditcard
+creditunion cricket crown crs cruise cruises cu cuisinella cv cw cx cy cymru cyou cz dad dance data date dating datsun
+day dclk dds de deal dealer deals degree delivery dell deloitte delta democrat dental dentist desi design dev dhl
+diamonds diet digital direct directory discount discover dish diy dj dk dm dnp do docs doctor dog domains dot download
+drive dtv dubai dupont durban dvag dvr dz earth eat ec eco edeka edu education ee eg email emerck energy engineer
+engineering enterprises epson equipment er ericsson erni es esq estate et eu eurovision eus events exchange expert
+exposed express extraspace fage fail fairwinds faith family fan fans farm farmers fashion fast fedex feedback ferrari
+ferrero fi fidelity fido film final finance financial fire firestone firmdale fish fishing fit fitness fj fk flickr
+flights flir florist flowers fly fm fo foo food football ford forex forsale forum foundation fox fr free fresenius frl
+frogans frontier ftr fujitsu fun fund furniture futbol fyi ga gal gallery gallo gallup game games gap garden gay gb
+gbiz gd gdn ge gea gent genting george gf gg ggee gh gi gift gifts gives giving gl glass gle global globo gm gmail
+gmbh gmo gmx gn godaddy gold goldpoint golf goodyear goog google gop got gov gp gq gr grainger graphics gratis green
+gripe grocery group gs gt gu gucci guge guide guitars guru gw gy hair hamburg hangout haus hbo hdfc hdfcbank health
+healthcare help here hermes hiphop hisamitsu hitachi hiv hk hkt hm hn hockey holdings holiday homedepot homegoods
+homes homesense honda horse hospital host hosting hot hotels hotmail house how hr hsbc ht hu hughes hyatt hyundai ibm
+icbc ice icu id ie ieee ifm ikano il im imamat imdb immo immobilien in inc industries infiniti info ing ink institute
+insurance insure int international intuit investments io ipiranga iq ir irish is ismaili ist istanbul it itau itv
+jaguar java jcb je jeep jetzt jewelry jio jll jm jmp jnj jo jobs joburg jot joy jp jpmorgan jprs juegos kaufen kddi ke
+kerryhotels kerryproperties kfh kg kh ki kia kids kim kindle kitchen kiwi km kn koeln komatsu kosher kp kpmg kpn kr
+krd kred kuokgroup kw ky kyoto kz la lacaixa lamborghini lamer land landrover lanxess lasalle lat latino latrobe law
+lawyer lb lc lds lease leclerc lefrak legal lego lexus lgbt li lidl life lifeinsurance lifestyle lighting like lilly
+limited limo lincoln link live living lk llc llp loan loans locker locus lol london lotte lotto love lpl lplfinancial
+lr ls lt ltd ltda lu lundbeck luxe luxury lv ly ma madrid maif maison makeup man management mango map market marketing
+markets marriott marshalls mattel mba mc mckinsey md me med media meet melbourne meme memorial men menu merck merckmsd
+mg mh miami microsoft mil mini mint mit mitsubishi mk ml mlb mls mm mma mn mo mobi mobile moda moe moi mom monash
+money monster mormon mortgage moscow moto motorcycles mov movie mp mq mr ms msd mt mtn mtr mu museum music mv mw mx my
+mz na nab nagoya name navy nba nc ne nec net netbank netflix network neustar new news next nextdirect nexus nf nfl ng
+ngo nhk ni nico nike nikon ninja nissan nissay nl no nokia norton now nowruz nowtv np nr nra nrw ntt nu nyc nz obi
+observer office okinawa olayan olayangroup ollo om omega one ong onl online ooo open oracle orange org organic origins
+osaka otsuka ott ovh pa page panasonic paris pars partners parts party pay pccw pe pet pf pfizer pg ph pharmacy phd
+philips phone photo photography photos physio pics pictet pictures pid pin ping pink pioneer pizza pk pl place play
+playstation plumbing plus pm pn pnc pohl poker politie porn post pr praxi press prime pro prod productions prof
+progressive promo properties property protection pru prudential ps pt pub pw pwc py qa qpon quebec quest racing radio
+re read realestate realtor realty recipes red redumbrella rehab reise reisen reit reliance ren rent rentals repair
+report republican rest restaurant review reviews rexroth rich richardli ricoh ril rio rip ro rocks rodeo rogers room
+rs rsvp ru rugby ruhr run rw rwe ryukyu sa saarland safe safety sakura sale salon samsclub samsung sandvik
+sandvikcoromant sanofi sap sarl sas save saxo sb sbi sbs sc scb schaeffler schmidt scholarships school schule schwarz
+science scot sd se search seat secure security seek select sener services seven sew sex sexy sfr sg sh shangrila sharp
+shell shia shiksha shoes shop shopping shouji show si silk sina singles site sj sk ski skin sky skype sl sling sm
+smart smile sn sncf so soccer social softbank software sohu solar solutions song sony soy spa space sport spot sr srl
+ss st stada staples star statebank statefarm stc stcgroup stockholm storage store stream studio study style su sucks
+supplies supply support surf surgery suzuki sv swatch swiss sx sy sydney systems sz tab taipei talk taobao target
+tatamotors tatar tattoo tax taxi tc tci td tdk team tech technology tel temasek tennis teva tf tg th thd theater
+theatre tiaa tickets tienda tips tires tirol tj tjmaxx tjx tk tkmaxx tl tm tmall tn to today tokyo tools top toray
+toshiba total tours town toyota toys tr trade trading training travel travelers travelersinsurance trust trv tt tube
+tui tunes tushu tv tvs tw tz ua ubank ubs ug uk unicom university uno uol ups us uy uz va vacations vana vanguard vc
+ve vegas ventures verisign versicherung vet vg vi viajes video vig viking villas vin vip virgin visa vision viva vivo
+vlaanderen vn vodka volvo vote voting voto voyage vu wales walmart walter wang wanggou watch watches weather
+weatherchannel web webcam weber website wed wedding weibo weir wf whoswho wien wiki williamhill win windows wine
+winners wme woodside work works world wow ws wtc wtf xbox xerox xihuan xin xn--11b4c3d xn--1ck2e1b xn--1qqw23a
+xn--2scrj9c xn--30rr7y xn--3bst00m xn--3ds443g xn--3e0b707e xn--3hcrj9c xn--3pxu8k xn--42c2d9a xn--45br5cyl
+xn--45brj9c xn--45q11c xn--4dbrk0ce xn--4gbrim xn--54b7fta0cc xn--55qw42g xn--55qx5d xn--5su34j936bgsg xn--5tzm5g
+xn--6frz82g xn--6qq986b3xl xn--80adxhks xn--80ao21a xn--80aqecdr1a xn--80asehdb xn--80aswg xn--8y0a063a xn--90a3ac
+xn--90ae xn--90ais xn--9dbq2a xn--9et52u xn--9krt00a xn--b4w605ferd xn--bck1b9a5dre4c xn--c1avg xn--c2br7g xn--cck2b3b
+xn--cckwcxetd xn--cg4bki xn--clchc0ea0b2g2a9gcd xn--czr694b xn--czrs0t xn--czru2d xn--d1acj3b xn--d1alf xn--e1a4c
+xn--eckvdtc9d xn--efvy88h xn--fct429k xn--fhbei xn--fiq228c5hs xn--fiq64b xn--fiqs8s xn--fiqz9s xn--fjq720a
+xn--flw351e xn--fpcrj9c3d xn--fzc2c9e2c xn--fzys8d69uvgm xn--g2xx48c xn--gckr3f0f xn--gecrj9c xn--gk3at1e
+xn--h2breg3eve xn--h2brj9c xn--h2brj9c8c xn--hxt814e xn--i1b6b1a6a2e xn--imr513n xn--io0a7i xn--j1aef xn--j1amh
+xn--j6w193g xn--jlq480n2rg xn--jvr189m xn--kcrx77d1x4a xn--kprw13d xn--kpry57d xn--kput3i xn--l1acc xn--lgbbat1ad8j
+xn--mgb9awbf xn--mgba3a3ejt xn--mgba3a4f16a xn--mgba7c0bbn0a xn--mgbaam7a8h xn--mgbab2bd xn--mgbah1a3hjkrd
+xn--mgbai9azgqp6j xn--mgbayh7gpa xn--mgbbh1a xn--mgbbh1a71e xn--mgbc0a9azcg xn--mgbca7dzdo xn--mgbcpq6gpa1a
+xn--mgberp4a5d4ar xn--mgbgu82a xn--mgbi4ecexp xn--mgbpl2fh xn--mgbt3dhd xn--mgbtx2b xn--mgbx4cd0ab xn--mix891f
+xn--mk1bu44c xn--mxtq1m xn--ngbc5azd xn--ngbe9e0a xn--ngbrx xn--node xn--nqv7f xn--nqv7fs00ema xn--nyqy26a xn--o3cw4h
+xn--ogbpf8fl xn--otu796d xn--p1acf xn--p1ai xn--pgbs0dh xn--pssy2u xn--q7ce6a xn--q9jyb4c xn--qcka1pmc xn--qxa6a
+xn--qxam xn--rhqv96g xn--rovu88b xn--rvc1e0am3e xn--s9brj9c xn--ses554g xn--t60b56a xn--tckwe xn--tiq49xqyj xn--unup4y
+xn--vermgensberater-ctb xn--vermgensberatung-pwb xn--vhquv xn--vuq861b xn--w4r85el8fhu5dnra xn--w4rs40l xn--wgbh1c
+xn--wgbl6a xn--xhq521b xn--xkc2al3hye2a xn--xkc2dl3a5ee0h xn--y9a3aq xn--yfro4i67o xn--ygbi2ammx xn--zfr164b xxx xyz
+yachts yahoo yamaxun yandex ye yodobashi yoga yokohama you youtube yt yun za zappos zara zero zip zm zone zuerich zw
+"""
+TLDS = (frozenset(_IANA_TLDS.split()) | {"onion"}) - {"arpa"}
 
 _LABEL = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
-_TLD = re.compile(r"^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$")
 # hosts-file line: an address, then the name (bind-adblock's REGEX_DOMAIN)
 _HOSTS = re.compile(r"^\s*(?:(?:\d{1,3}\.){3}\d{1,3}|::1?|::)\s+(?P<domain>\S+)")
 _COMMENT = re.compile(r"\s+#.*$")
@@ -67,7 +156,8 @@ def normalize(name: str) -> str | None:
     """Lower-case a list entry and check it is a usable DNS name.
 
     Returns None for anything rspamd could never see as a URL host or a
-    sender domain: IP addresses, single labels, reserved TLDs, bad labels.
+    sender domain: IP addresses, single labels, bad labels, and names whose
+    last label is not a top-level domain (file names, reserved names).
     """
     name = name.strip().lower().rstrip(".")
     if name.startswith("*."):
@@ -79,8 +169,7 @@ def normalize(name: str) -> str | None:
         return None
     if not all(_LABEL.match(label) for label in labels):
         return None
-    tld = labels[-1]
-    if not _TLD.match(tld) or tld in RESERVED_TLDS:
+    if labels[-1] not in TLDS:
         return None
     return name
 
@@ -104,9 +193,18 @@ def parents(name: str) -> list[str]:
 @dataclass
 class ParseStats:
     lines: int = 0
-    matched: int = 0
+    matched: int = 0  # distinct names
     invalid: int = 0
     skipped: int = 0  # comments, empty lines, rows of another type or class
+    duplicates: int = 0  # a name listed again
+    files: int = 0  # talos: files read from the archive
+
+    def add(self, out: dict[str, str], name: str, category: str) -> None:
+        if name in out:
+            self.duplicates += 1
+        else:
+            out[name] = category
+            self.matched += 1
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -132,8 +230,7 @@ def parse_domain(text: str, category: str, stats: ParseStats) -> dict[str, str]:
         if name is None:
             stats.invalid += 1
             continue
-        out[name] = category
-        stats.matched += 1
+        stats.add(out, name, category)
     return out
 
 
@@ -154,8 +251,7 @@ def parse_hosts(text: str, category: str, stats: ParseStats) -> dict[str, str]:
         if name is None:
             stats.invalid += 1
             continue
-        out[name] = category
-        stats.matched += 1
+        stats.add(out, name, category)
     return out
 
 
@@ -180,13 +276,89 @@ def parse_infoblox(text: str, classes: dict[str, str], stats: ParseStats) -> dic
         if name is None:
             stats.invalid += 1
             continue
-        out[name] = category
-        stats.matched += 1
+        stats.add(out, name, category)
     return out
 
 
-def parse(feed: Feed, text: str) -> tuple[dict[str, str], ParseStats]:
+# Cisco Talos IOC lists defang names: evil[.]com, evil(.)com, hxxp[://]
+_DEFANG = [
+    (re.compile(r"\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)", re.I), "."),
+    (re.compile(r"\[://\]|\(://\)"), "://"),
+    (re.compile(r"\[:\]"), ":"),
+    (re.compile(r"\[/\]"), "/"),
+    (re.compile(r"\[at\]|\(at\)", re.I), "@"),
+    (re.compile(r"\bhxxp", re.I), "http"),
+]
+# scheme://[user@]host[:port]... ; the host is up to the port or the path
+_URL_HOST = re.compile(r"^[a-z][a-z0-9+.-]*://(?:[^/?#@\s]*@)?(?P<host>[^/?#:\s]+)", re.I)
+_TLD_LIKE = re.compile(r"^(?:[a-z]{2,}|xn--[a-z0-9-]+)$", re.I)
+
+
+def refang(text: str) -> str:
+    for pat, rep in _DEFANG:
+        text = pat.sub(rep, text)
+    return text
+
+
+def talos_candidates(line: str) -> list[str]:
+    """The hostname-looking tokens of a Talos IOC line, defanging undone:
+    bare names and the hosts of URLs (user info, port and path removed).
+    Email addresses, IP addresses and hashes are not candidates; a name
+    whose last label is not a TLD (a file name) is, and fails normalize()."""
+    out = []
+    for tok in re.split(r"[\s,;|]+", refang(line)):
+        tok = tok.strip("\"'<>()[]{}")
+        m = _URL_HOST.match(tok)
+        if m:
+            tok = m.group("host")
+        elif "@" in tok:
+            continue
+        else:
+            tok = tok.split("/", 1)[0].rsplit(":", 1)[0]
+        labels = tok.rstrip(".").split(".")
+        if len(labels) >= 2 and _TLD_LIKE.match(labels[-1]):
+            out.append(tok)
+    return out
+
+
+def parse_talos(data: bytes, category: str, stats: ParseStats) -> dict[str, str]:
+    """A GitHub archive (tar.gz) of Cisco-Talos/IOCs: every *.txt file in
+    it, one per blog post, a mixed list of hashes, IP addresses, URLs,
+    domains and email addresses, often defanged. Keeps the host names,
+    bare or from URLs, once each; the rest is skipped. The STIX .json
+    files beside them list fewer names and are not read."""
+    out: dict[str, str] = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            for member in tar:
+                if not member.isfile() or not member.name.lower().endswith(".txt"):
+                    continue
+                if member.size > MAX_MEMBER:
+                    raise ValueError(f"{member.name}: {member.size} bytes, larger than {MAX_MEMBER >> 20} MiB")
+                stats.files += 1
+                with tar.extractfile(member) as f:
+                    text = f.read().decode("utf-8", errors="replace")
+                for raw in text.splitlines():
+                    stats.lines += 1
+                    candidates = talos_candidates(raw)
+                    if not candidates:
+                        stats.skipped += 1
+                    for cand in candidates:
+                        name = normalize(cand)
+                        if name is None:
+                            stats.invalid += 1
+                        else:
+                            stats.add(out, name, category)
+    except (tarfile.TarError, OSError, EOFError) as e:
+        raise ValueError(f"not a tar.gz archive: {e}") from None
+    return out
+
+
+def parse(feed: Feed, data: bytes) -> tuple[dict[str, str], ParseStats]:
     stats = ParseStats()
+    if feed.format == "talos":
+        return parse_talos(data, feed.category, stats), stats
+    text = data.decode("utf-8", errors="replace")
     if feed.format == "domain":
         return parse_domain(text, feed.category, stats), stats
     if feed.format == "hosts":
@@ -338,8 +510,8 @@ def _write_atomic(path: Path, data: bytes, mode: int = 0o644) -> None:
         raise
 
 
-def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> str | None:
-    """The feed's text: downloaded, or the cached copy if not modified,
+def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> bytes | None:
+    """The feed's body: downloaded, or the cached copy if not modified,
     unreachable (while younger than max_cache_age) or offline."""
     data_path, meta_path = _cache_paths(cfg, feed)
     meta = {}
@@ -347,7 +519,7 @@ def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> str | Non
         with contextlib.suppress(ValueError, OSError):
             meta = json.loads(meta_path.read_text())
 
-    def cached(reason: str) -> str | None:
+    def cached(reason: str) -> bytes | None:
         if not data_path.exists():
             log.warning(f"{feed.name}: {reason}, and no cached copy")
             return None
@@ -357,7 +529,7 @@ def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> str | Non
             return None
         if not offline:
             log.warning(f"{feed.name}: {reason}, using the cached copy ({age / 3600:.1f}h old)")
-        return data_path.read_text(encoding="utf-8", errors="replace")
+        return data_path.read_bytes()
 
     if offline:
         return cached("offline")
@@ -379,12 +551,11 @@ def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> str | Non
             meta["fetched"] = time.time()
             _write_atomic(meta_path, json.dumps(meta).encode())
             log.info(f"{feed.name}: not modified")
-            return data_path.read_text(encoding="utf-8", errors="replace")
+            return data_path.read_bytes()
         return cached(f"HTTP {e.code}")
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         return cached(f"download failed ({getattr(e, 'reason', e)})")
 
-    text = body.decode("utf-8", errors="replace")
     _write_atomic(data_path, body)
     meta = {
         "url": feed.url,
@@ -394,7 +565,7 @@ def fetch(cfg: Config, feed: Feed, log: Log, offline: bool = False) -> str | Non
     }
     _write_atomic(meta_path, json.dumps(meta).encode())
     log.info(f"{feed.name}: downloaded {len(body)} bytes")
-    return text
+    return body
 
 
 # --------------------------------------------------------------------------
@@ -488,19 +659,20 @@ def collect(cfg: Config, log: Log, offline: bool = False, keep_sources: bool = F
     parsed = []
     stats = {}
     for feed in cfg.feeds:
-        text = fetch(cfg, feed, log, offline=offline)
-        if text is None:
+        data = fetch(cfg, feed, log, offline=offline)
+        if data is None:
             stats[feed.name] = {"error": True}
             continue
         try:
-            names, s = parse(feed, text)
+            names, s = parse(feed, data)
         except ValueError as e:
             log.warning(f"{feed.name}: {e}")
             stats[feed.name] = {"error": True}
             continue
         if s.matched == 0:
             log.warning(f"{feed.name}: no names parsed ({s.lines} lines)")
-        log.info(f"{feed.name}: {s.matched} names, {s.invalid} invalid, {s.skipped} skipped")
+        extra = (f", {s.duplicates} listed again" if s.duplicates else "") + (f", {s.files} files" if s.files else "")
+        log.info(f"{feed.name}: {s.matched} names, {s.invalid} invalid, {s.skipped} skipped{extra}")
         stats[feed.name] = s.as_dict()
         parsed.append((feed, names))
     res = merge(cfg, parsed, keep_sources=keep_sources)

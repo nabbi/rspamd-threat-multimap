@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -42,11 +43,47 @@ format = "infoblox"
 classes = {{ malicious = "malware", phishing = "phishing" }}
 
 [[feed]]
+name = "talos"
+url = "https://feeds.invalid/iocs.tar.gz"
+format = "talos"
+category = "malware"
+
+[[feed]]
 name = "off"
 url = "https://feeds.invalid/off.txt"
 category = "malware"
 enabled = false
 """
+
+TALOS_FILES = {
+    "IOCs-main/2026/04/report.txt": (
+        "d41d8cd98f00b204e9800998ecf8427e\r\n"
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\r\n"
+        "144[.]172[.]102[.]88\r\n"
+        "c2(.)talos-evil(.)com\r\n"
+        "hxxps[://]www[.]talos-evil[.]com[:]8443/x/y.php\r\n"
+        "http://user:pw@shared.example.net/path, hxxp://10.0.0.1/drop.exe\r\n"
+        "attacker[at]talos-evil.com\r\n"
+        "auto.exe\r\n"
+        "IOCs:\r\n"
+    ),
+    "IOCs-main/2025/01/other.txt": "c2.talos-evil.com\nupdate.go\n",
+    "IOCs-main/2025/01/other.json": '{"objects": [{"type": "indicator", "pattern": "[domain-name:value = \'json-only.com\']"}]}',
+    "IOCs-main/2024/10/server/server.py": "HOST = 'py-only.com'\n",
+    "IOCs-main/README.md": "see https://blog.talosintelligence.com/\n",
+}
+
+
+def talos_tarball(files=TALOS_FILES):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
 
 FEEDS = {
     "https://feeds.invalid/phish.txt": "# header\nevil.example.com\nBAD.Example.org.  # inline\n\n"
@@ -58,6 +95,7 @@ FEEDS = {
     "domain,meh.example.io,suspicious,2026-01-01\n"
     "domain,1.0.0.127.in-addr.arpa,malicious,2026-01-01\n"
     "ip,192.0.2.1,malicious,2026-01-01\n",
+    "https://feeds.invalid/iocs.tar.gz": talos_tarball(),
 }
 
 
@@ -80,7 +118,9 @@ def fake_urlopen(feeds, calls=None):
         body = feeds[req.full_url]
         if isinstance(body, Exception):
             raise body
-        return FakeResp(body.encode(), {"ETag": '"v1"'})
+        if isinstance(body, str):
+            body = body.encode()
+        return FakeResp(body, {"ETag": '"v1"'})
 
     return urlopen
 
@@ -126,8 +166,17 @@ class TestNormalize(unittest.TestCase):
     def test_invalid(self):
         for bad in ["", "com", "192.0.2.1", "1.2.3.4.in-addr.arpa", "-a.example.com",
                     "a-.example.com", "host.local", "a..b.com", "x" * 64 + ".com",
-                    "example.c0m", "ex ample.com", "localhost"]:
+                    "example.c0m", "ex ample.com", "localhost", "host.example", "host.test"]:
             self.assertIsNone(m.normalize(bad), bad)
+
+    def test_tld_must_be_real(self):
+        # file names and made-up suffixes are not hosts; .zip and .sh are TLDs
+        for bad in ["auto.exe", "index.php", "ca.pem", "go.oo", "update.google.hta", "a.xn--nope"]:
+            self.assertIsNone(m.normalize(bad), bad)
+        for ok in ["x.zip", "x.sh", "x.xn--p1ai", "x.co.uk", "x.top"]:
+            self.assertEqual(m.normalize(ok), ok)
+        self.assertGreater(len(m.TLDS), 1400)
+        self.assertNotIn("arpa", m.TLDS)
 
     def test_parents(self):
         self.assertEqual(m.parents("a.b.example.com"), ["a.b.example.com", "b.example.com", "example.com"])
@@ -139,7 +188,7 @@ class TestParsers(unittest.TestCase):
         s = m.ParseStats()
         out = m.parse_domain("# c\n! c\n\nevil.com\nevil.com extra\nbad_\n192.0.2.1\n", "phishing", s)
         self.assertEqual(out, {"evil.com": "phishing"})
-        self.assertEqual((s.matched, s.invalid, s.skipped), (2, 2, 3))
+        self.assertEqual((s.matched, s.invalid, s.skipped, s.duplicates), (1, 2, 3, 1))
 
     def test_hosts(self):
         s = m.ParseStats()
@@ -157,11 +206,51 @@ class TestParsers(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.parse_infoblox("a,b\n1,2\n", {}, m.ParseStats())
 
+    def test_refang(self):
+        self.assertEqual(m.refang("hxxps[://]www[.]a(.)b[dot]com[:]80[/]x"), "https://www.a.b.com:80/x")
+        self.assertEqual(m.refang("HXXP://a{.}b (dot) c, x[at]y"), "http://a.b . c, x@y")
+
+    def test_talos_candidates(self):
+        line = "hxxps[://]www[.]evil(.)com[:]8443/x/y.php, foo[at]bar.com 1.2.3.4|443 " \
+               "d41d8cd98f00b204e9800998ecf8427e evil2.com/path 'q.top' <rand>.c.ru auto.exe [::1]"
+        self.assertEqual(m.talos_candidates(line), ["www.evil.com", "evil2.com", "q.top", "rand>.c.ru", "auto.exe"])
+        self.assertEqual(m.talos_candidates("IOCs:"), [])
+        self.assertEqual(m.talos_candidates(""), [])
+
+    def test_talos(self):
+        s = m.ParseStats()
+        out = m.parse_talos(talos_tarball(), "malware", s)
+        # only *.txt files: the .json and .py names are not read
+        self.assertEqual(out, {
+            "c2.talos-evil.com": "malware",
+            "www.talos-evil.com": "malware",
+            "shared.example.net": "malware",
+        })
+        # files, lines; c2.talos-evil.com twice; auto.exe and update.go
+        # are file names; no candidates on the hash, IP, email, label lines
+        self.assertEqual(s.files, 2)
+        self.assertEqual(s.lines, 11)
+        self.assertEqual((s.matched, s.duplicates, s.invalid, s.skipped), (3, 1, 2, 5))
+
+    def test_talos_not_an_archive(self):
+        with self.assertRaises(ValueError):
+            m.parse_talos(b"evil.com\n", "malware", m.ParseStats())
+        with self.assertRaises(ValueError):
+            m.parse_talos(b"", "malware", m.ParseStats())
+        whole = talos_tarball()
+        with self.assertRaises(ValueError):
+            m.parse_talos(whole[: len(whole) // 2], "malware", m.ParseStats())
+
+    def test_talos_member_too_large(self):
+        big = {"IOCs-main/x.txt": "a.com\n" * (m.MAX_MEMBER // 6 + 1)}
+        with self.assertRaises(ValueError):
+            m.parse_talos(talos_tarball(big), "malware", m.ParseStats())
+
 
 class TestConfig(Base):
     def test_load(self):
         cfg = m.load_config(self.cfg_path)
-        self.assertEqual([f.name for f in cfg.feeds], ["phish", "hosts", "ibx"])
+        self.assertEqual([f.name for f in cfg.feeds], ["phish", "hosts", "ibx", "talos"])
         self.assertEqual(cfg.allowlist, {"mine.example.edu"})
         self.assertEqual(cfg.protect, {"google.com"})
 
@@ -183,7 +272,8 @@ class TestConfig(Base):
         (tmp / "allowlist.txt").write_text((repo / "allowlist.example.txt").read_text())
         cfg = m.load_config(tmp / "config.toml")
         self.assertTrue(all(f.enabled for f in cfg.feeds))
-        self.assertEqual(len(cfg.feeds), 5)
+        self.assertEqual(len(cfg.feeds), 6)
+        self.assertEqual([f.format for f in cfg.feeds if f.format == "talos"], ["talos"])
 
 
 class TestUpdate(Base):
@@ -193,14 +283,18 @@ class TestUpdate(Base):
         lines, text = self.map_lines()
         self.assertEqual(lines, [
             "bad.example.org THREAT_PHISHING",
+            "c2.talos-evil.com THREAT_MALWARE",
             "evil.example.com THREAT_PHISHING",
             "hosted.example.com THREAT_PHISHING",
             "phish.example.io THREAT_PHISHING",
             # phishing in one feed, malware in another: the higher rank wins
             "shared.example.net THREAT_MALWARE",
+            "www.talos-evil.com THREAT_MALWARE",
         ])
-        self.assertIn("# all categories: 5", text)
+        self.assertIn("# all categories: 7", text)
         self.assertIn("# entries: 4", (self.d / "out/phishing.map").read_text())
+        self.assertIn("# feed talos: 3 names, 2 invalid", text)
+        self.assertIn("talos: 3 names, 2 invalid, 5 skipped, 1 listed again, 2 files", err)
         self.assertIn("# dropped: 2 allowlisted, 1 protected", text)
         self.assertEqual(os.stat(self.d / "out/phishing.map").st_mode & 0o777, 0o644)
 
@@ -225,7 +319,7 @@ class TestUpdate(Base):
         feeds = {k: err304 for k in FEEDS}
         rc, _, err = self.run_main("update", feeds=feeds)
         self.assertEqual(rc, 0, err)
-        self.assertEqual(len(self.map_lines()[0]), 5)
+        self.assertEqual(len(self.map_lines()[0]), 7)
 
     def test_failed_feed_uses_cache_and_warns(self):
         self.run_main("update")
@@ -234,7 +328,7 @@ class TestUpdate(Base):
         rc, _, err = self.run_main("-q", "update", feeds=feeds)
         self.assertEqual(rc, 1)
         self.assertIn("using the cached copy", err)
-        self.assertEqual(len(self.map_lines()[0]), 5)
+        self.assertEqual(len(self.map_lines()[0]), 7)
 
     def test_stale_cache_dropped(self):
         self.run_main("update")
@@ -252,11 +346,12 @@ class TestUpdate(Base):
         self.run_main("update")
         feeds = {k: "" for k in FEEDS}
         feeds["https://feeds.invalid/ibx.csv"] = "type,indicator,classification\n"
+        feeds["https://feeds.invalid/iocs.tar.gz"] = talos_tarball({})
         feeds["https://feeds.invalid/phish.txt"] = "evil.example.com\n"
         rc, _, err = self.run_main("update", feeds=feeds)
         self.assertEqual(rc, 1)
         self.assertIn("maps not replaced", err)
-        self.assertEqual(len(self.map_lines()[0]), 5)
+        self.assertEqual(len(self.map_lines()[0]), 7)
         rc, _, _ = self.run_main("update", "--force", feeds=feeds)
         self.assertEqual(self.map_lines()[0], ["evil.example.com THREAT_PHISHING"])
 
@@ -266,7 +361,7 @@ class TestUpdate(Base):
             (self.d / f"out/{cat}.map").unlink()
         rc, _, err = self.run_main("update", "--offline", feeds={})
         self.assertEqual(rc, 0, err)
-        self.assertEqual(len(self.map_lines()[0]), 5)
+        self.assertEqual(len(self.map_lines()[0]), 7)
 
 
 class TestMapFormat(Base):
@@ -319,7 +414,7 @@ class TestLookup(Base):
         self.assertEqual(rc, 2)
         self.assertEqual(out.splitlines(), [
             "www.evil.example.com\tevil.example.com\tTHREAT_PHISHING\tphish",
-            "shared.example.net\tshared.example.net\tTHREAT_MALWARE\tphish,ibx",
+            "shared.example.net\tshared.example.net\tTHREAT_MALWARE\tphish,ibx,talos",
         ])
 
     def test_lookup_miss(self):

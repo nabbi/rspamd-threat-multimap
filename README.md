@@ -36,17 +36,30 @@ mail, they list the marketing and bulk senders people subscribe to
 
 | Feed | Category | Names* | Source |
 |---|---|---:|---|
-| `phishing-filter` | phishing | 22,794 | [malware-filter](https://gitlab.com/malware-filter/phishing-filter): OpenPhish, PhishTank, IPThreat; every 12h |
-| `cert-pl` | phishing | 126,485 | [CERT Polska](https://cert.pl/en/warning-list/) warning list |
-| `urlhaus-online` | malware | 548 | [malware-filter](https://gitlab.com/malware-filter/urlhaus-filter): URLhaus hosts with malware online now; every 12h |
-| `infoblox` | malware, phishing | 26,747 | [Infoblox threat intelligence](https://github.com/infobloxopen/threat-intelligence): malicious, clickfix, voltastealer, phishing (not "suspicious") |
+| `phishing-filter` | phishing | 22,386 | [malware-filter](https://gitlab.com/malware-filter/phishing-filter): OpenPhish, PhishTank, IPThreat; every 12h |
+| `cert-pl` | phishing | 126,628 | [CERT Polska](https://cert.pl/en/warning-list/) warning list |
+| `urlhaus-online` | malware | 539 | [malware-filter](https://gitlab.com/malware-filter/urlhaus-filter): URLhaus hosts with malware online now; every 12h |
+| `infoblox` | malware, phishing | 26,734 | [Infoblox threat intelligence](https://github.com/infobloxopen/threat-intelligence): malicious, clickfix, voltastealer, phishing (not "suspicious") |
 | `blp-ransomware` | malware | 1,904 | [The Block List Project](https://github.com/blocklistproject/Lists) ransomware |
+| `talos` | malware | 2,649 | [Cisco Talos IOCs](https://github.com/Cisco-Talos/IOCs): the hosts in the IOC lists of its blog posts, 2022 on |
 | `hagezi-fake` (off) | fraud | ~17,500 | [HaGeZi](https://github.com/hagezi/dns-blocklists) fake shops and scams |
 | `blp-scam` (off) | fraud | ~8,500 | The Block List Project scam |
 
-\* 2026-11-03. Merged: 176,819 names. Feeds publish under their own
+\* 2026-11-03. Merged: 179,218 names. Feeds publish under their own
 terms; check them for your use. This project downloads them; it does not
 redistribute them.
+
+The Talos feed is the repository's GitHub archive (one 2.4 MB tar.gz,
+fetched again only when a report is added). Each blog post's `.txt` file
+mixes hashes, IP addresses, URLs, domains and email addresses, usually
+defanged (`evil[.]com`, `hxxp[://]`). The parser undoes that and keeps the
+host names, bare or from URLs, and drops the rest: hashes, IPs and email
+addresses, and file names (`auto.exe`) because their suffix is not a
+top-level domain. A host named by several posts is listed once. Talos
+also gives URLs of payloads on shared platforms (`bit.ly`, `discord.com`,
+`drive.google.com`…); `protect` in the example config keeps those hosts
+out. The STIX `.json` files beside the lists name fewer hosts and are not
+read.
 
 rspamd's own `phishing` module already checks full URLs against OpenPhish
 and PhishTank; this adds their domains with wildcard matching, the other
@@ -147,8 +160,10 @@ Safeguards in `update`:
   overrides.
 - **Conditional downloads.** Requests send `If-None-Match` and
   `If-Modified-Since`.
-- **Invalid names are dropped.** IP addresses, single labels and reserved
-  TLDs (`.arpa`, `.local`, `.test`…) never reach the map.
+- **Invalid names are dropped.** IP addresses, single labels, and names
+  whose last label is not a top-level domain (`.local`, `.test`, `.exe`;
+  IANA's list is built in, `.onion` added, `.arpa` removed) never reach
+  the map.
 - **One run at a time.** A lock file stops runs from overlapping.
 
 ## Limits
