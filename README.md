@@ -146,7 +146,7 @@ map.
 
 Shared hosts are never listed exactly; their subdomains still can be
 (`phish.sharepoint.com`, a tenant's `name.workers.dev`). The updater has
-a built-in list (`SHARED_HOSTS`, about 230 names): file, paste and
+a built-in list (`SHARED_HOSTS`, about 270 names): file, paste and
 link-shortening services and image hosts and archives (`drive.google.com`,
 `pastebin.com`, `bit.ly`, `imgur.com`, `web.archive.org`),
 code and package registries (`github.com`, `rubygems.org`), cloud storage
@@ -156,7 +156,12 @@ app stores and forums (`play.google.com`, `apps.apple.com`,
 marketing senders a feed lists by mistake now and then (`gmail.com`,
 `sendgrid.net`), the IP-check sites malware calls (`ipinfo.io`), and the
 vendor update hosts an adversary-in-the-middle report lists as spoofed
-(`updates.microsoft.com`, `get.adobe.com`). IOC lists name them as the
+(`updates.microsoft.com`, `get.adobe.com`). Also in it: the vendors and
+projects whose own sites a report names as a tool's source
+(`torproject.org`, `rdpguard.com`), and the news and government sites a
+report names as compromised for a watering-hole attack
+(`phnompenhpost.com`, `mfaic.gov.kh`): the site's own mail and links are
+not the threat. Checked against the Tranco top million (2026-11-03). IOC lists name them as the
 URL of a payload, a malicious app or a C2 channel; the host says nothing
 about a message, and most mail links to one. `protect` in `config.toml` adds your own
 (the example names `zoom.us`, `box.com`, `webex.com`).

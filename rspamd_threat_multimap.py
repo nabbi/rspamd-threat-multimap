@@ -42,7 +42,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
@@ -187,6 +187,12 @@ chatgpt.com openai.com api.openai.com openrouter.ai getsession.org example.com e
 ip-api.com ipinfo.io ifconfig.me api.ipify.org ipify.org ipecho.net ident.me geoplugin.net
 reallyfreegeoip.org icanhazip.com ipv4.icanhazip.com myexternalip.com curlmyip.net ip.sb
 api.myip.com ipwho.is checkip.dyndns.org timeapi.io worldtimeapi.org
+checkip.com bitly.com j.mp simp.ly shrinkearn.com webhook.site submit-form.com
+od.lk filetransfer.io tmpfiles.org speedyshare.com xsph.ru webcindario.com gitcode.net
+convertkit-mail2.com
+torproject.org gsocket.io rdpguard.com k9webprotection.com mirotalk.net chrome-stats.com
+jetbrains.cloud toptal.com solaredge.com deribit.com mcmod.cn
+danviet.vn phnompenhpost.com cxotoday.com mfaic.gov.kh nepra.org.pk hgc.com.hk
 """.split())
 
 _LABEL = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
