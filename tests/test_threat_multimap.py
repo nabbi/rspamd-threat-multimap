@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import rspamd_threat_multimap as m
 
 CONFIG = """
-output = "{d}/out/threat.map"
+output_dir = "{d}/out"
 cache_dir = "{d}/cache"
 min_ratio = 0.5
 allowlist = "allow.txt"
@@ -104,8 +104,15 @@ class Base(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def map_lines(self):
-        text = (self.d / "out/threat.map").read_text()
-        return [line for line in text.splitlines() if not line.startswith("#")], text
+        """Every category map's names as 'name SYMBOL', sorted, and the
+        files' text."""
+        symbols = {"malware": "THREAT_MALWARE", "phishing": "THREAT_PHISHING"}
+        lines, text = [], ""
+        for cat, sym in symbols.items():
+            t = (self.d / f"out/{cat}.map").read_text()
+            text += t
+            lines += [f"{n} {sym}" for n in t.splitlines() if not n.startswith("#")]
+        return sorted(lines), text
 
 
 class TestNormalize(unittest.TestCase):
@@ -192,18 +199,19 @@ class TestUpdate(Base):
             # phishing in one feed, malware in another: the higher rank wins
             "shared.example.net THREAT_MALWARE",
         ])
-        self.assertIn("# entries: 5", text)
+        self.assertIn("# all categories: 5", text)
+        self.assertIn("# entries: 4", (self.d / "out/phishing.map").read_text())
         self.assertIn("# dropped: 2 allowlisted, 1 protected", text)
-        self.assertEqual(os.stat(self.d / "out/threat.map").st_mode & 0o777, 0o644)
+        self.assertEqual(os.stat(self.d / "out/phishing.map").st_mode & 0o777, 0o644)
 
     def test_unchanged_is_not_rewritten(self):
         self.run_main("update")
-        before = (self.d / "out/threat.map").stat().st_mtime_ns
+        before = (self.d / "out/phishing.map").stat().st_mtime_ns
         time.sleep(0.01)
         rc, _, err = self.run_main("update")
         self.assertEqual(rc, 0)
         self.assertIn("unchanged", err)
-        self.assertEqual((self.d / "out/threat.map").stat().st_mtime_ns, before)
+        self.assertEqual((self.d / "out/phishing.map").stat().st_mtime_ns, before)
 
     def test_conditional_request(self):
         self.run_main("update")
@@ -247,17 +255,61 @@ class TestUpdate(Base):
         feeds["https://feeds.invalid/phish.txt"] = "evil.example.com\n"
         rc, _, err = self.run_main("update", feeds=feeds)
         self.assertEqual(rc, 1)
-        self.assertIn("map not replaced", err)
+        self.assertIn("maps not replaced", err)
         self.assertEqual(len(self.map_lines()[0]), 5)
         rc, _, _ = self.run_main("update", "--force", feeds=feeds)
         self.assertEqual(self.map_lines()[0], ["evil.example.com THREAT_PHISHING"])
 
     def test_offline(self):
         self.run_main("update")
-        (self.d / "out/threat.map").unlink()
+        for cat in ("malware", "phishing"):
+            (self.d / f"out/{cat}.map").unlink()
         rc, _, err = self.run_main("update", "--offline", feeds={})
         self.assertEqual(rc, 0, err)
         self.assertEqual(len(self.map_lines()[0]), 5)
+
+
+class TestMapFormat(Base):
+    def test_domain_only_lines(self):
+        # rspamd drops a 'key value' line split across its 1 MiB read
+        # chunks; a key alone is read again whole
+        self.run_main("update")
+        for cat in ("malware", "phishing"):
+            body = [ln for ln in (self.d / f"out/{cat}.map").read_text().splitlines() if not ln.startswith("#")]
+            self.assertTrue(body)
+            self.assertTrue(all(" " not in ln and "\t" not in ln for ln in body), body)
+
+    def test_empty_category_gets_a_file(self):
+        self.cfg_path.write_text(CONFIG.format(d=self.d).replace(
+            'phishing = {{ symbol = "THREAT_PHISHING", rank = 2 }}'.replace("{{", "{").replace("}}", "}"),
+            'phishing = { symbol = "THREAT_PHISHING", rank = 2 }\nfraud = { symbol = "THREAT_FRAUD", rank = 1 }'))
+        rc, _, err = self.run_main("update")
+        self.assertEqual(rc, 0, err)
+        text = (self.d / "out/fraud.map").read_text()
+        self.assertIn("# entries: 0", text)
+        self.assertEqual([ln for ln in text.splitlines() if not ln.startswith("#")], [])
+
+    def test_only_changed_maps_rewritten(self):
+        self.run_main("update")
+        before = {c: (self.d / f"out/{c}.map").stat().st_mtime_ns for c in ("malware", "phishing")}
+        time.sleep(0.01)
+        feeds = dict(FEEDS)
+        feeds["https://feeds.invalid/phish.txt"] += "new.example.com\n"
+        rc, _, err = self.run_main("update", feeds=feeds)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual((self.d / "out/malware.map").stat().st_mtime_ns, before["malware"])
+        self.assertNotEqual((self.d / "out/phishing.map").stat().st_mtime_ns, before["phishing"])
+
+    def test_old_output_key_rejected(self):
+        self.cfg_path.write_text(CONFIG.format(d=self.d).replace("output_dir = ", "output = "))
+        with self.assertRaises(m.ConfigError):
+            m.load_config(self.cfg_path)
+
+    def test_bad_category_name(self):
+        self.cfg_path.write_text(CONFIG.format(d=self.d).replace("malware  =", "Mal/ware =").replace(
+            '"malware"', '"Mal/ware"'))
+        with self.assertRaises(m.ConfigError):
+            m.load_config(self.cfg_path)
 
 
 class TestLookup(Base):

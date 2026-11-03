@@ -1,4 +1,4 @@
-# /etc/cron.d/rspamd-threat-multimap: refresh the threat map every 4 hours
+# /etc/cron.d/rspamd-threat-multimap: refresh the threat maps every 4 hours
 # as the rspamd user. -q: output (mailed by cron) only on problems.
 # The phishing feeds change every 12 hours; phishing domains live for days.
 SHELL=/bin/sh

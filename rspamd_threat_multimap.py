@@ -2,10 +2,15 @@
 """rspamd-threat-multimap: build an rspamd multimap of high-risk threat domains.
 
 Downloads public threat feeds (phishing and malware domains), validates
-and merges them into one hash map of ``domain SYMBOL`` lines that a single
-rspamd multimap rule reads (rspamd/local.d/multimap.conf). The selector in
-rspamd/lua.local.d/selectors/threat_domains.lua feeds that rule every URL
-host in the message, with its parent domains, and the sender domains.
+and merges them into one map per category (``<category>.map``, a domain per
+line), each read by one rspamd multimap rule (rspamd/local.d/multimap.conf).
+The selector in rspamd/lua.local.d/selectors/threat_domains.lua feeds those
+rules every URL host in the message, with its parent domains, and the
+sender domains.
+
+Domain-only lines, not ``domain SYMBOL``: rspamd (4.2.3 and earlier) reads a
+file map in 1 MiB chunks and drops a ``key value`` line when a chunk ends
+after its key; a key alone is read again whole.
 
 Python 3.11+, standard library only.
 
@@ -34,7 +39,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
@@ -205,7 +210,7 @@ class Feed:
 
 @dataclass
 class Config:
-    output: Path
+    output_dir: Path
     cache_dir: Path
     categories: dict[str, dict]  # name -> {symbol, rank}
     feeds: list[Feed]
@@ -241,8 +246,12 @@ def load_config(path: str | Path) -> Config:
             raise ConfigError(f"{path}: '{key}' is required")
         return raw[key]
 
+    if "output" in raw:
+        raise ConfigError(f"{path}: 'output' (one map) is replaced by 'output_dir' (a map per category) in 0.2.0")
     categories = need("categories")
     for name, c in categories.items():
+        if not re.match(r"^[a-z][a-z0-9_-]*$", name):
+            raise ConfigError(f"{path}: category {name!r} must be lower-case [a-z0-9_-] (it names {name}.map)")
         if not isinstance(c, dict) or not re.match(r"^[A-Z][A-Z0-9_]*$", str(c.get("symbol", ""))):
             raise ConfigError(f"{path}: categories.{name}.symbol must be an upper-case rspamd symbol")
         c.setdefault("rank", 0)
@@ -279,7 +288,7 @@ def load_config(path: str | Path) -> Config:
         protect.add(name)
 
     return Config(
-        output=Path(need("output")),
+        output_dir=Path(need("output_dir")),
         cache_dir=Path(need("cache_dir")),
         categories=categories,
         feeds=feeds,
@@ -429,28 +438,38 @@ def merge(cfg: Config, parsed: list[tuple[Feed, dict[str, str]]], keep_sources: 
     return res
 
 
-def render(cfg: Config, res: Result) -> tuple[str, str]:
-    """(header, body) of the map file. The body alone decides whether the
-    file changed, so a run with nothing new leaves rspamd's map alone."""
-    body = "".join(f"{name} {cfg.categories[cat]['symbol']}\n" for name, cat in sorted(res.entries.items()))
-    counts = {}
-    for cat in res.entries.values():
-        counts[cat] = counts.get(cat, 0) + 1
-    header = [
-        f"# rspamd-threat-multimap {VERSION}: generated {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
-        f"# entries: {len(res.entries)}",
-    ]
-    for cat in sorted(counts):
-        header.append(f"# category {cat} ({cfg.categories[cat]['symbol']}): {counts[cat]}")
-    for name, s in res.stats.items():
-        header.append(f"# feed {name}: {s.get('matched', 0)} names, {s.get('invalid', 0)} invalid")
-    if res.dropped_allow or res.dropped_protect:
-        header.append(f"# dropped: {res.dropped_allow} allowlisted, {res.dropped_protect} protected")
-    return "\n".join(header) + "\n", body
+def map_path(cfg: Config, category: str) -> Path:
+    return cfg.output_dir / f"{category}.map"
+
+
+def render(cfg: Config, res: Result) -> dict[str, tuple[str, str]]:
+    """{category: (header, body)} of each category's map; every category
+    gets a file, empty or not, so its rspamd rule always has one. The body
+    alone decides whether a file changed, so a run with nothing new leaves
+    rspamd's maps alone."""
+    names: dict[str, list[str]] = {cat: [] for cat in cfg.categories}
+    for name, cat in res.entries.items():
+        names[cat].append(name)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    feeds = [f"# feed {n}: {s.get('matched', 0)} names, {s.get('invalid', 0)} invalid"
+             for n, s in res.stats.items()]
+    out = {}
+    for cat, lst in names.items():
+        header = [
+            f"# rspamd-threat-multimap {VERSION}: generated {stamp}",
+            f"# category {cat} ({cfg.categories[cat]['symbol']})",
+            f"# entries: {len(lst)}",
+            f"# all categories: {len(res.entries)}",
+            *feeds,
+        ]
+        if res.dropped_allow or res.dropped_protect:
+            header.append(f"# dropped: {res.dropped_allow} allowlisted, {res.dropped_protect} protected")
+        out[cat] = ("\n".join(header) + "\n", "".join(f"{n}\n" for n in sorted(lst)))
+    return out
 
 
 def _previous(path: Path) -> tuple[int | None, str | None]:
-    """(entries, body) of the current map, if there is one."""
+    """(entries, body) of a current map, if there is one."""
     if not path.exists():
         return None, None
     count, body = None, []
@@ -503,21 +522,27 @@ def _lock(cfg: Config):
 def cmd_update(cfg: Config, args, log: Log) -> int:
     with _lock(cfg):
         res = collect(cfg, log, offline=args.offline)
-        header, body = render(cfg, res)
-        prev_count, prev_body = _previous(cfg.output)
+        maps = render(cfg, res)
+        prev = {cat: _previous(map_path(cfg, cat)) for cat in maps}
+        counts = [c for c, _ in prev.values() if c is not None]
+        prev_total = sum(counts) if counts else None
         total = len(res.entries)
-        if not args.force and prev_count and total < prev_count * cfg.min_ratio:
-            log.warning(f"{total} entries is under {cfg.min_ratio:.0%} of the current {prev_count}; map not replaced (--force)")
+        if not args.force and prev_total and total < prev_total * cfg.min_ratio:
+            log.warning(f"{total} entries is under {cfg.min_ratio:.0%} of the current {prev_total}; maps not replaced (--force)")
             return 1
         if total == 0:
-            log.warning("no entries; map not replaced")
+            log.warning("no entries; maps not replaced")
             return 1
-        if body == prev_body and not args.force:
-            log.info(f"{cfg.output}: unchanged ({total} entries)")
-        else:
-            cfg.output.parent.mkdir(parents=True, exist_ok=True)
-            _write_atomic(cfg.output, (header + body).encode())
-            log.info(f"{cfg.output}: {total} entries (was {prev_count if prev_count is not None else 'none'})")
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
+        for cat, (header, body) in maps.items():
+            path = map_path(cfg, cat)
+            count = body.count("\n")
+            prev_count, prev_body = prev[cat]
+            if body == prev_body and not args.force:
+                log.info(f"{path}: unchanged ({count} entries)")
+            else:
+                _write_atomic(path, (header + body).encode())
+                log.info(f"{path}: {count} entries (was {prev_count if prev_count is not None else 'none'})")
     return 1 if log.problems else 0
 
 

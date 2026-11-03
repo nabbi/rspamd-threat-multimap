@@ -4,8 +4,8 @@ rspamd-threat-multimap: the `threat_domains` selector.
 Install as $LOCAL_CONFDIR/lua.local.d/selectors/threat_domains.lua
 (rspamd 3.12+ loads lua.local.d/selectors/*.lua, lua_extras).
 
-Returns the names a message points at, for one multimap rule
-(local.d/multimap.conf, THREAT_DOMAIN) to look up in threat.map:
+Returns the names a message points at, for the multimap rules
+(local.d/multimap.conf, THREAT_*) to look up in their <category>.map:
 
   urls     every URL host in the message: text and HTML parts, mailto:
            addresses, and the URLs rspamd finds in attachments it reads

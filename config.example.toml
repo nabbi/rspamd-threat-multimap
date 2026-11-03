@@ -2,9 +2,10 @@
 # /etc/rspamd-threat-multimap/config.toml; relative paths (allowlist) are
 # relative to this file.
 
-# The map rspamd reads (local.d/multimap.conf, THREAT_DOMAIN's `map`).
-# The updater runs as the rspamd user, so both paths are rspamd's.
-output = "/var/lib/rspamd/threat-multimap/threat.map"
+# Where the maps go: <category>.map, a domain per line, each read by one
+# rule in local.d/multimap.conf. The updater runs as the rspamd user, so
+# both paths are rspamd's.
+output_dir = "/var/lib/rspamd/threat-multimap"
 # The last good copy of each feed, used when a download fails
 cache_dir = "/var/lib/rspamd/threat-multimap/cache"
 
@@ -27,9 +28,9 @@ protect = [
   "mailchimp.com", "sendgrid.net", "exacttarget.com", "salesforce.com",
 ]
 
-# Category -> the rspamd symbol its names carry. A name in several
-# categories gets the one with the highest rank. The symbols must be in
-# the multimap rule's `symbols` and scored in local.d/groups.conf.
+# Category -> <category>.map and the symbol of the rule that reads it
+# (local.d/multimap.conf, where the scores are). A name in several
+# categories goes into the one with the highest rank only.
 [categories]
 malware  = { symbol = "THREAT_MALWARE",  rank = 3 }
 phishing = { symbol = "THREAT_PHISHING", rank = 2 }

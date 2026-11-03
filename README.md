@@ -1,8 +1,8 @@
 # rspamd-threat-multimap
 
 Score mail that points at known phishing and malware domains in
-[rspamd](https://rspamd.com), from public threat feeds, with one multimap
-rule and one in-memory map.
+[rspamd](https://rspamd.com), from public threat feeds: one map and one
+multimap rule per category.
 
 - **What is checked:** every URL host in the message (text and HTML parts,
   `mailto:` addresses, URLs rspamd extracts from PDF and Office
@@ -14,8 +14,9 @@ rule and one in-memory map.
   suffix (`com`, `co.uk`, or a hosting suffix such as `blogspot.com`) is
   never looked up.
 - **What it fires:** `THREAT_PHISHING`, `THREAT_MALWARE` (and
-  `THREAT_FRAUD` for the optional lower-risk feeds). The option names
-  each matched domain. Scores are per symbol and count once per message.
+  `THREAT_FRAUD` for the optional lower-risk feeds), one rule each, reading
+  `phishing.map`, `malware.map` and `fraud.map`. The option names each
+  matched domain. Each symbol counts once per message.
 - **What it needs:** rspamd 3.12+ (`lua.local.d/selectors`); tested with
   4.2.3. Python 3.11+, standard library only.
 
@@ -75,8 +76,16 @@ rspamadm configtest && rc-service rspamd reload   # or systemctl reload rspamd
 install -m 0644 cron/rspamd-threat-multimap /etc/cron.d/rspamd-threat-multimap
 ```
 
-rspamd re-reads `threat.map` when the file changes. The updater replaces
-it atomically, and only when the list of names changed.
+rspamd re-reads a map when its file changes. The updater replaces each map
+atomically, and only when its list of names changed.
+
+Each map holds one domain per line, with no value. rspamd (4.2.3 and
+earlier) reads file maps in 1 MiB chunks. When a chunk ends after a line's
+key, its parser loses the key and drops the line (it logs `empty or
+invalid key found on line 0`). That costs a `key value` map over 1 MiB up
+to one line per chunk. A line that is only a key is read again whole, so
+nothing is lost. 0.1.0 wrote one `domain SYMBOL` map and lost 3 of its
+176,819 names this way.
 
 Put your own domains, and the ones you exchange mail with, in
 `allowlist.txt`: a listed name and everything under it are never in the
@@ -86,17 +95,29 @@ themselves; their subdomains still can be (`phish.sharepoint.com`).
 
 ## Scores
 
-`rspamd/local.d/groups.conf`: `THREAT_MALWARE` 8, `THREAT_PHISHING` 7 (as
-rspamd's `PHISHED_OPENPHISH`), `THREAT_FRAUD` 4, each `one_shot`, the
-group capped at 12. Tune them to your action thresholds. To score URL and
-sender hits apart, make two rules with `selector =
-"threat_domains('urls')"` and `"threat_domains('senders')"`; each rule
-holds its own copy of the map.
+In `rspamd/local.d/multimap.conf`:
+
+- `THREAT_MALWARE` 8;
+- `THREAT_PHISHING` 7, as rspamd's `PHISHED_OPENPHISH`;
+- `THREAT_FRAUD` 4.
+
+Each is `one_shot`, and `rspamd/local.d/groups.conf` caps the group at 12.
+Tune them to your action thresholds. To score URL and sender hits apart,
+copy a rule with `selector = "threat_domains('urls')"` or
+`"threat_domains('senders')"`; each rule holds its own copy of its map.
+
+## Upgrading from 0.1.0
+
+`output` (one `threat.map`) is now `output_dir` (`<category>.map`), and
+the single `THREAT_DOMAIN` rule is now a rule per category, scored in the
+rule rather than in `groups.conf`. Replace both rspamd files, set
+`output_dir`, run `update`, then delete `threat.map`.
 
 ## Memory
 
-Measured with rspamd 4.2.3 on x86_64, 176,819 names: **about 15 MB per
-rspamd process**: the main process and each worker hold their own copy.
+Measured with rspamd 4.2.3 on x86_64, 176,819 names in one map: **about
+15 MB per rspamd process**: the main process and each worker hold their
+own copy. A map per category holds the same names.
 With a proxy (self-scan) and a controller, that is about 45 MB per host. The
 same names as an RPZ zone in BIND take about 170 MB, because the zone also
 needs a `*.name` record per name for wildcard matching.
@@ -121,8 +142,9 @@ Safeguards in `update`:
 - **Failed downloads.** A feed that fails uses its last good copy for up
   to `max_cache_age_hours` (72), then drops out. The run exits 1, so cron
   mails you.
-- **Feed outages.** A map smaller than `min_ratio` (half) of the current
-  one is not written; `--force` overrides.
+- **Feed outages.** If all the maps together would hold less than
+  `min_ratio` (half) of what they hold now, none is written; `--force`
+  overrides.
 - **Conditional downloads.** Requests send `If-None-Match` and
   `If-Modified-Since`.
 - **Invalid names are dropped.** IP addresses, single labels and reserved
