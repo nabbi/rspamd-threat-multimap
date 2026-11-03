@@ -1,0 +1,3 @@
+# Names never listed, nor any name under them: one per line.
+# Your own domains and the ones you exchange mail with.
+example.org

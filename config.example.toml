@@ -1,0 +1,91 @@
+# rspamd-threat-multimap configuration (TOML). Install as
+# /etc/rspamd-threat-multimap/config.toml; relative paths (allowlist) are
+# relative to this file.
+
+# The map rspamd reads (local.d/multimap.conf, THREAT_DOMAIN's `map`).
+# The updater runs as the rspamd user, so both paths are rspamd's.
+output = "/var/lib/rspamd/threat-multimap/threat.map"
+# The last good copy of each feed, used when a download fails
+cache_dir = "/var/lib/rspamd/threat-multimap/cache"
+
+timeout = 30                # seconds per download
+max_cache_age_hours = 72    # a feed down longer than this is dropped from the map
+min_ratio = 0.5             # refuse a map under half the current one (a feed outage)
+
+# Names never listed, nor anything under them (yours, partners')
+allowlist = "allowlist.txt"
+
+# Names never listed exactly (their subdomains still can be). Large shared
+# platforms: a feed listing one of these by mistake would hit most mail.
+protect = [
+  "amazon.com", "amazonaws.com", "amazonses.com", "apple.com", "icloud.com",
+  "cloudflare.com", "docusign.net", "dropbox.com", "github.com",
+  "githubusercontent.com", "gmail.com", "google.com", "googleapis.com",
+  "googleusercontent.com", "live.com", "microsoft.com", "office.com",
+  "onmicrosoft.com", "outlook.com", "sharepoint.com", "yahoo.com",
+  "constantcontact.com", "hubspotemail.net", "list-manage.com",
+  "mailchimp.com", "sendgrid.net", "exacttarget.com", "salesforce.com",
+]
+
+# Category -> the rspamd symbol its names carry. A name in several
+# categories gets the one with the highest rank. The symbols must be in
+# the multimap rule's `symbols` and scored in local.d/groups.conf.
+[categories]
+malware  = { symbol = "THREAT_MALWARE",  rank = 3 }
+phishing = { symbol = "THREAT_PHISHING", rank = 2 }
+fraud    = { symbol = "THREAT_FRAUD",    rank = 1 }
+
+# Feeds. format: domain (a name per line), hosts ("0.0.0.0 name"),
+# infoblox (combined.csv; `classes` maps its classification to a category,
+# classifications not listed are skipped).
+
+# Phishing: OpenPhish, PhishTank and IPThreat, refreshed every 12 hours
+[[feed]]
+name = "phishing-filter"
+url = "https://malware-filter.gitlab.io/malware-filter/phishing-filter-domains.txt"
+format = "domain"
+category = "phishing"
+
+# Phishing: CERT Polska's warning list
+[[feed]]
+name = "cert-pl"
+url = "https://hole.cert.pl/domains/domains.txt"
+format = "domain"
+category = "phishing"
+
+# Malware distribution: URLhaus, hosts with malware URLs online now
+# (urlhaus-filter-domains.txt adds the offline ones)
+[[feed]]
+name = "urlhaus-online"
+url = "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains-online.txt"
+format = "domain"
+category = "malware"
+
+# Infoblox threat intelligence; 'suspicious' is not high risk, not listed
+[[feed]]
+name = "infoblox"
+url = "https://raw.githubusercontent.com/infobloxopen/threat-intelligence/refs/heads/main/indicators/combined.csv"
+format = "infoblox"
+classes = { malicious = "malware", clickfix = "malware", voltastealer = "malware", phishing = "phishing" }
+
+# Ransomware: The Block List Project
+[[feed]]
+name = "blp-ransomware"
+url = "https://blocklistproject.github.io/Lists/alt-version/ransomware-nl.txt"
+format = "domain"
+category = "malware"
+
+# Lower risk, off by default: fake shops and scams, more false positives
+[[feed]]
+name = "hagezi-fake"
+url = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/fake-onlydomains.txt"
+format = "domain"
+category = "fraud"
+enabled = false
+
+[[feed]]
+name = "blp-scam"
+url = "https://blocklistproject.github.io/Lists/alt-version/scam-nl.txt"
+format = "domain"
+category = "fraud"
+enabled = false

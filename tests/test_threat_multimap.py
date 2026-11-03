@@ -1,0 +1,279 @@
+import io
+import json
+import os
+import sys
+import tempfile
+import time
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import rspamd_threat_multimap as m  # noqa: E402
+
+CONFIG = """
+output = "{d}/out/threat.map"
+cache_dir = "{d}/cache"
+min_ratio = 0.5
+allowlist = "allow.txt"
+protect = ["google.com"]
+
+[categories]
+malware  = {{ symbol = "THREAT_MALWARE",  rank = 3 }}
+phishing = {{ symbol = "THREAT_PHISHING", rank = 2 }}
+
+[[feed]]
+name = "phish"
+url = "https://feeds.invalid/phish.txt"
+format = "domain"
+category = "phishing"
+
+[[feed]]
+name = "hosts"
+url = "https://feeds.invalid/hosts.txt"
+format = "hosts"
+category = "phishing"
+
+[[feed]]
+name = "ibx"
+url = "https://feeds.invalid/ibx.csv"
+format = "infoblox"
+classes = {{ malicious = "malware", phishing = "phishing" }}
+
+[[feed]]
+name = "off"
+url = "https://feeds.invalid/off.txt"
+category = "malware"
+enabled = false
+"""
+
+FEEDS = {
+    "https://feeds.invalid/phish.txt": "# header\nevil.example.com\nBAD.Example.org.  # inline\n\nshared.example.net\ngoogle.com\nmine.example.edu\nsub.mine.example.edu\n",
+    "https://feeds.invalid/hosts.txt": "0.0.0.0 hosted.example.com\n127.0.0.1 localhost\n0.0.0.0 0.0.0.0\nnot a hosts line\n",
+    "https://feeds.invalid/ibx.csv": "type,indicator,classification,detected_date\n"
+    "domain,shared.example.net,malicious,2026-01-01\n"
+    "domain,phish.example.io,phishing,2026-01-01\n"
+    "domain,meh.example.io,suspicious,2026-01-01\n"
+    "domain,1.0.0.127.in-addr.arpa,malicious,2026-01-01\n"
+    "ip,192.0.2.1,malicious,2026-01-01\n",
+}
+
+
+class FakeResp(io.BytesIO):
+    def __init__(self, body, headers=None):
+        super().__init__(body)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self.close()
+
+
+def fake_urlopen(feeds, calls=None):
+    def urlopen(req, timeout=None):
+        if calls is not None:
+            calls.append(req)
+        body = feeds[req.full_url]
+        if isinstance(body, Exception):
+            raise body
+        return FakeResp(body.encode(), {"ETag": '"v1"'})
+
+    return urlopen
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+        (self.d / "allow.txt").write_text("# ours\nmine.example.edu\n")
+        self.cfg_path = self.d / "config.toml"
+        self.cfg_path.write_text(CONFIG.format(d=self.d))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_main(self, *argv, feeds=FEEDS, calls=None):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(m.urllib.request, "urlopen", fake_urlopen(feeds, calls)), \
+                redirect_stdout(out), mock.patch.object(sys, "stderr", err):
+            rc = m.main(["-c", str(self.cfg_path), *argv])
+        return rc, out.getvalue(), err.getvalue()
+
+    def map_lines(self):
+        text = (self.d / "out/threat.map").read_text()
+        return [line for line in text.splitlines() if not line.startswith("#")], text
+
+
+class TestNormalize(unittest.TestCase):
+    def test_valid(self):
+        self.assertEqual(m.normalize("WWW.Example.COM."), "www.example.com")
+        self.assertEqual(m.normalize("*.evil.com"), "evil.com")
+        self.assertEqual(m.normalize("xn--80ak6aa92e.com"), "xn--80ak6aa92e.com")
+        self.assertEqual(m.normalize("a_b.example.com"), "a_b.example.com")
+        self.assertEqual(m.normalize("abc.onion"), "abc.onion")
+
+    def test_invalid(self):
+        for bad in ["", "com", "192.0.2.1", "1.2.3.4.in-addr.arpa", "-a.example.com",
+                    "a-.example.com", "host.local", "a..b.com", "x" * 64 + ".com",
+                    "example.c0m", "ex ample.com", "localhost"]:
+            self.assertIsNone(m.normalize(bad), bad)
+
+    def test_parents(self):
+        self.assertEqual(m.parents("a.b.example.com"), ["a.b.example.com", "b.example.com", "example.com"])
+        self.assertEqual(m.parents("example.com"), ["example.com"])
+
+
+class TestParsers(unittest.TestCase):
+    def test_domain(self):
+        s = m.ParseStats()
+        out = m.parse_domain("# c\n! c\n\nevil.com\nevil.com extra\nbad_\n192.0.2.1\n", "phishing", s)
+        self.assertEqual(out, {"evil.com": "phishing"})
+        self.assertEqual((s.matched, s.invalid, s.skipped), (2, 2, 3))
+
+    def test_hosts(self):
+        s = m.ParseStats()
+        out = m.parse_hosts("0.0.0.0 a.com\n127.0.0.1 b.com # x\n:: c.com\nd.com\n0.0.0.0 localhost\n", "malware", s)
+        self.assertEqual(set(out), {"a.com", "b.com", "c.com"})
+        self.assertEqual(s.invalid, 2)
+
+    def test_infoblox(self):
+        s = m.ParseStats()
+        out = m.parse_infoblox(FEEDS["https://feeds.invalid/ibx.csv"], {"malicious": "malware", "phishing": "phishing"}, s)
+        self.assertEqual(out, {"shared.example.net": "malware", "phish.example.io": "phishing"})
+        self.assertEqual((s.matched, s.invalid, s.skipped), (2, 1, 2))
+
+    def test_infoblox_bad_header(self):
+        with self.assertRaises(ValueError):
+            m.parse_infoblox("a,b\n1,2\n", {}, m.ParseStats())
+
+
+class TestConfig(Base):
+    def test_load(self):
+        cfg = m.load_config(self.cfg_path)
+        self.assertEqual([f.name for f in cfg.feeds], ["phish", "hosts", "ibx"])
+        self.assertEqual(cfg.allowlist, {"mine.example.edu"})
+        self.assertEqual(cfg.protect, {"google.com"})
+
+    def test_unknown_category(self):
+        self.cfg_path.write_text(CONFIG.format(d=self.d).replace('category = "phishing"', 'category = "nope"', 1))
+        with self.assertRaises(m.ConfigError):
+            m.load_config(self.cfg_path)
+
+    def test_bad_symbol(self):
+        self.cfg_path.write_text(CONFIG.format(d=self.d).replace('"THREAT_MALWARE"', '"threat malware"'))
+        with self.assertRaises(m.ConfigError):
+            m.load_config(self.cfg_path)
+
+    def test_example_config_loads(self):
+        repo = Path(__file__).resolve().parent.parent
+        tmp = self.d / "example"
+        tmp.mkdir()
+        (tmp / "config.toml").write_text((repo / "config.example.toml").read_text())
+        (tmp / "allowlist.txt").write_text((repo / "allowlist.example.txt").read_text())
+        cfg = m.load_config(tmp / "config.toml")
+        self.assertTrue(all(f.enabled for f in cfg.feeds))
+        self.assertEqual(len(cfg.feeds), 5)
+
+
+class TestUpdate(Base):
+    def test_map(self):
+        rc, _, err = self.run_main("update")
+        self.assertEqual(rc, 0, err)
+        lines, text = self.map_lines()
+        self.assertEqual(lines, [
+            "bad.example.org THREAT_PHISHING",
+            "evil.example.com THREAT_PHISHING",
+            "hosted.example.com THREAT_PHISHING",
+            "phish.example.io THREAT_PHISHING",
+            # phishing in one feed, malware in another: the higher rank wins
+            "shared.example.net THREAT_MALWARE",
+        ])
+        self.assertIn("# entries: 5", text)
+        self.assertIn("# dropped: 2 allowlisted, 1 protected", text)
+        self.assertEqual(os.stat(self.d / "out/threat.map").st_mode & 0o777, 0o644)
+
+    def test_unchanged_is_not_rewritten(self):
+        self.run_main("update")
+        before = (self.d / "out/threat.map").stat().st_mtime_ns
+        time.sleep(0.01)
+        rc, _, err = self.run_main("update")
+        self.assertEqual(rc, 0)
+        self.assertIn("unchanged", err)
+        self.assertEqual((self.d / "out/threat.map").stat().st_mtime_ns, before)
+
+    def test_conditional_request(self):
+        self.run_main("update")
+        calls = []
+        self.run_main("update", calls=calls)
+        self.assertTrue(all(r.get_header("If-none-match") == '"v1"' for r in calls))
+
+    def test_not_modified_uses_cache(self):
+        self.run_main("update")
+        err304 = m.urllib.error.HTTPError("u", 304, "Not Modified", {}, None)
+        feeds = {k: err304 for k in FEEDS}
+        rc, _, err = self.run_main("update", feeds=feeds)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(self.map_lines()[0]), 5)
+
+    def test_failed_feed_uses_cache_and_warns(self):
+        self.run_main("update")
+        feeds = dict(FEEDS)
+        feeds["https://feeds.invalid/phish.txt"] = m.urllib.error.URLError("down")
+        rc, _, err = self.run_main("-q", "update", feeds=feeds)
+        self.assertEqual(rc, 1)
+        self.assertIn("using the cached copy", err)
+        self.assertEqual(len(self.map_lines()[0]), 5)
+
+    def test_stale_cache_dropped(self):
+        self.run_main("update")
+        cfg = m.load_config(self.cfg_path)
+        _, meta = m._cache_paths(cfg, cfg.feeds[0])
+        meta.write_text(json.dumps({"fetched": time.time() - 100 * 3600}))
+        feeds = dict(FEEDS)
+        feeds["https://feeds.invalid/phish.txt"] = m.urllib.error.URLError("down")
+        rc, _, err = self.run_main("update", "--force", feeds=feeds)
+        self.assertEqual(rc, 1)
+        self.assertIn("too old", err)
+        self.assertNotIn("evil.example.com THREAT_PHISHING", self.map_lines()[0])
+
+    def test_shrink_guard(self):
+        self.run_main("update")
+        feeds = {k: "" for k in FEEDS}
+        feeds["https://feeds.invalid/ibx.csv"] = "type,indicator,classification\n"
+        feeds["https://feeds.invalid/phish.txt"] = "evil.example.com\n"
+        rc, _, err = self.run_main("update", feeds=feeds)
+        self.assertEqual(rc, 1)
+        self.assertIn("map not replaced", err)
+        self.assertEqual(len(self.map_lines()[0]), 5)
+        rc, _, _ = self.run_main("update", "--force", feeds=feeds)
+        self.assertEqual(self.map_lines()[0], ["evil.example.com THREAT_PHISHING"])
+
+    def test_offline(self):
+        self.run_main("update")
+        (self.d / "out/threat.map").unlink()
+        rc, _, err = self.run_main("update", "--offline", feeds={})
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(self.map_lines()[0]), 5)
+
+
+class TestLookup(Base):
+    def test_lookup(self):
+        self.run_main("update")
+        rc, out, _ = self.run_main("lookup", "www.Evil.Example.com", "shared.example.net", "clean.example.com")
+        self.assertEqual(rc, 2)
+        self.assertEqual(out.splitlines(), [
+            "www.evil.example.com\tevil.example.com\tTHREAT_PHISHING\tphish",
+            "shared.example.net\tshared.example.net\tTHREAT_MALWARE\tphish,ibx",
+        ])
+
+    def test_lookup_miss(self):
+        self.run_main("update")
+        rc, out, _ = self.run_main("lookup", "example.com", "sub.mine.example.edu")
+        self.assertEqual((rc, out), (0, ""))
+
+
+if __name__ == "__main__":
+    unittest.main()
