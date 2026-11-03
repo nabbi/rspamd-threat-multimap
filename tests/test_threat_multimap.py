@@ -486,7 +486,8 @@ class TestParsers(unittest.TestCase):
 
     def test_shared_hosts(self):
         for h in ["drive.google.com", "discord.com", "workers.dev", "bit.ly", "t.me", "s3.amazonaws.com", "ipinfo.io",
-                  "play.google.com", "apps.apple.com", "sway.cloud.microsoft", "get.adobe.com", "www.reddit.com"]:
+                  "play.google.com", "apps.apple.com", "sway.cloud.microsoft", "get.adobe.com", "www.reddit.com",
+                  "imgur.com", "ibb.co", "web.archive.org"]:
             self.assertIn(h, m.SHARED_HOSTS)
         for h in m.SHARED_HOSTS:
             self.assertEqual(m.normalize(h), h, h)

@@ -42,7 +42,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 DEFAULT_CONFIG = "/etc/rspamd-threat-multimap/config.toml"
 USER_AGENT = f"rspamd-threat-multimap/{VERSION} (+https://github.com/nabbi/rspamd-threat-multimap)"
 MAX_BODY = 64 * 1024 * 1024
@@ -170,7 +170,7 @@ apple.com icloud.com cloudflare.com workers.dev pages.dev r2.dev trycloudflare.c
 dropbox.com www.dropbox.com dl.dropbox.com dl.dropboxusercontent.com
 discord.com discordapp.com cdn.discordapp.com media.discordapp.net discord.gg
 t.me api.telegram.org web.telegram.org telegra.ph graph.org
-pastebin.com paste.ee rentry.co hastebin.com
+pastebin.com paste.ee rentry.co hastebin.com imgur.com ibb.co web.archive.org
 bit.ly is.gd t.ly t.co tinyurl.com cutt.ly rebrand.ly psee.io href.li short.gy rb.gy shorturl.at
 goo.gl ow.ly tiny.cc lnkd.in
 transfer.sh temp.sh filebin.net catbox.moe files.catbox.moe anonfiles.com gofile.io pixeldrain.com

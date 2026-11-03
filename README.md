@@ -147,7 +147,8 @@ map.
 Shared hosts are never listed exactly; their subdomains still can be
 (`phish.sharepoint.com`, a tenant's `name.workers.dev`). The updater has
 a built-in list (`SHARED_HOSTS`, about 230 names): file, paste and
-link-shortening services (`drive.google.com`, `pastebin.com`, `bit.ly`),
+link-shortening services and image hosts and archives (`drive.google.com`,
+`pastebin.com`, `bit.ly`, `imgur.com`, `web.archive.org`),
 code and package registries (`github.com`, `rubygems.org`), cloud storage
 and web platforms (`s3.amazonaws.com`, `workers.dev`, `vercel.app`),
 app stores and forums (`play.google.com`, `apps.apple.com`,
