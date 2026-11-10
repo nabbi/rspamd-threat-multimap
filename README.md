@@ -21,7 +21,7 @@ multimap rule per category.
   4.2.3. Python 3.11+, standard library only.
 
 It is the mail-server counterpart of DNS blocking with
-[bind-adblock](https://github.com/nabbi/bind-adblock). Blocking these
+[bind-rpz-builder](https://github.com/nabbi/bind-rpz-builder). Blocking these
 names in the mail server's resolver (RPZ) makes Postfix reject mail with a
 permanent error for any sender, client or HELO name a feed lists by
 mistake, and holds the lists in the resolver. Scoring them in rspamd

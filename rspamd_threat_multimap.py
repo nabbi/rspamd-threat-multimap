@@ -16,7 +16,7 @@ after its key; a key alone is read again whole.
 
 Python 3.11+, standard library only.
 
-The hosts-file parsing follows nabbi/bind-adblock (Trellmor/bind-adblock,
+The hosts-file parsing follows nabbi/bind-rpz-builder (Trellmor/bind-adblock,
 MIT, Copyright (c) 2018 Daniel Triendl).
 """
 
@@ -196,7 +196,7 @@ danviet.vn phnompenhpost.com cxotoday.com mfaic.gov.kh nepra.org.pk hgc.com.hk
 """.split())
 
 _LABEL = re.compile(r"^(?!-)[a-z0-9_-]{1,63}(?<!-)$")
-# hosts-file line: an address, then the name (bind-adblock's REGEX_DOMAIN)
+# hosts-file line: an address, then the name (bind-rpz-builder's REGEX_DOMAIN)
 _HOSTS = re.compile(r"^\s*(?:(?:\d{1,3}\.){3}\d{1,3}|::1?|::)\s+(?P<domain>\S+)")
 _COMMENT = re.compile(r"\s+#.*$")
 
